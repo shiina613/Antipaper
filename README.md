@@ -1,82 +1,68 @@
-# Paperless Meetings
+# Antipaper
 
-MVP for helping provincial officials read, understand, and prepare for meetings from long PDF documents.
+Trợ lý AI giúp cán bộ đọc nhanh tài liệu họp dài, chuẩn bị câu hỏi và tra cứu bằng tiếng Việt với citation đến trang/mục/điều.
 
-## MVP Scope
+## Trạng thái hiện tại
 
-1. Extract PDF content quickly without full-document OCR.
-2. Detect table regions with YOLOv8.
-3. Mask table areas during native text extraction.
-4. Convert detected tables to markdown placeholders.
-5. Stitch page text and tables into citation-ready content.
-6. Generate:
-   - Structured summary.
-   - Specialized terminology explanations.
-   - Suggested critical-thinking questions.
-   - Vietnamese document-grounded Q&A with page citations.
+Kho mã nguồn đang ở mức khung kỹ thuật:
 
-FastAPI and Streamlit interfaces are intentionally not implemented yet.
+- Đã có luồng PDF bằng PyMuPDF, Streamlit MVP và giao diện Next.js tĩnh.
+- Đã có xử lý mẫu cho tóm tắt, thuật ngữ, câu hỏi và Q&A cấp trang.
+- Chưa có LLM thật, DOCX, FastAPI, truy hồi ngữ nghĩa, citation cấp điều/mục và đo hiệu năng dưới 60 giây.
+- Kho `data/` đã có nhiều PDF từ 40 trang; tài liệu demo được chọn qua `DEMO_DOCUMENT_PATH`, không phụ thuộc tên file.
 
-## Project Structure
+Xem trạng thái chi tiết tại [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGRESS.md).
+
+## Tài liệu làm việc
+
+| Tài liệu | Mục đích |
+|---|---|
+| [problem.txt](problem.txt) | Đề bài và phạm vi sản phẩm |
+| [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) | Người dùng, yêu cầu và phạm vi MVP |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc xử lý và quyết định kỹ thuật |
+| [docs/TECH_STACK.md](docs/TECH_STACK.md) | Ngăn xếp công nghệ dùng trong 48 giờ |
+| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Hợp đồng tích hợp backend–frontend |
+| [docs/BUILD_PLAN_48H.md](docs/BUILD_PLAN_48H.md) | Timeline, mốc khóa và phương án dự phòng |
+| [docs/ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Cách kiểm chứng tiêu chí nộp bài |
+| [docs/ONE_PAGE_DECK.md](docs/ONE_PAGE_DECK.md) | Nội dung deck một trang |
+| `docs/TASKS_*.md` | Việc cụ thể của từng thành viên |
+
+## Phân công 5 người
+
+| Thành viên | Mảng phụ trách | Chi tiết |
+|---|---|---|
+| Hậu | Tóm tắt, thuật ngữ, câu hỏi AI và OCR fallback | [TASKS_HAU.md](docs/TASKS_HAU.md) |
+| Tuấn | Nhập PDF/DOCX, parse cấu trúc, citation và LLM client | [TASKS_TUAN.md](docs/TASKS_TUAN.md) |
+| Tùng | Giao diện, tích hợp, demo và deck | [TASKS_TUNG.md](docs/TASKS_TUNG.md) |
+| Tùng Anh | Truy hồi, Q&A, văn bản liên quan, kiểm tra citation | [TASKS_TUNG_ANH.md](docs/TASKS_TUNG_ANH.md) |
+| Hưng | FastAPI, job/cache, đo hiệu năng và đóng gói chạy | [TASKS_HUNG.md](docs/TASKS_HUNG.md) |
+
+## Cấu trúc chính
 
 ```text
-paperless_meetings/
-├── data/
-├── docs/
-├── frontend/
-├── models/
-├── scripts/
-├── src/
-│   ├── intelligence/
-│   └── pipeline/
-│       ├── __init__.py
-│       ├── pdf_parser.py
-│       ├── processor.py
-│       ├── table_ocr.py
-│       └── stitcher.py
-├── .env
-├── requirements.txt
-└── README.md
+Antipaper/
+├── data/                 # PDF mẫu công khai
+├── docs/                 # Kiến trúc, kế hoạch, kiểm thử và task
+├── frontend/             # Next.js dashboard
+├── scripts/              # Script demo/benchmark
+├── src/intelligence/     # Tóm tắt, thuật ngữ, câu hỏi, Q&A
+├── src/pipeline/         # Trích xuất và chuẩn hóa tài liệu
+└── app.py                # Streamlit MVP dự phòng
 ```
 
-## Setup
+## Chạy baseline hiện tại
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-## Download YOLO Table Weights
-
-```powershell
 python download_yolo_table_weights.py
-```
-
-This stores the table detector at:
-
-```text
-models/table_detect_yolov8.pt
-```
-
-## Run Demo
-
-```powershell
-$env:PYTHONIOENCODING='utf-8'
-python scripts\demo_meeting_ai.py --pdf "data\01.pdf"
-```
-
-The demo prints processing time, detected tables, structured summary, terminology highlights, suggested questions, and one grounded Q&A answer.
-
-## Run All-In-One App
-
-```powershell
 streamlit run app.py
 ```
 
-The app lets users upload a PDF, then runs extraction, table detection, structured summary, terminology explanation, suggested questions, page content preview, and a Vietnamese chatbot with citations. The chatbot only answers from the uploaded PDF; if it cannot find evidence in that document, it refuses to answer.
+Baseline cần YOLO weights. Kiến trúc hackathon mới sẽ đưa YOLO ra khỏi luồng bắt buộc để ưu tiên tốc độ và độ ổn định.
 
-## Run Frontend Dashboard
+Frontend tĩnh:
 
 ```powershell
 cd frontend
@@ -84,12 +70,9 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+## Quy tắc làm việc 48 giờ
 
-The current dashboard is adapted from the ShadcnDeck ChatDeck shadcn template and displays static demo data from `data/01.pdf`. The next step is wiring it to a backend upload/API endpoint.
-
-## Notes
-
-- `data/01.pdf` is a short 4-page smoke-test file.
-- The challenge submission still needs a real 40+ page document test.
-- Table-to-markdown and intelligence generation are MVP placeholders and should be replaced with stronger AI models for production.
+- Chốt schema và API trước khi chia nhánh.
+- Mỗi nhiệm vụ có điều kiện hoàn thành và bằng chứng chạy được.
+- Merge theo lát cắt end-to-end; không chờ đến cuối mới tích hợp.
+- Sau giờ 32 chỉ sửa lỗi P0/P1 và hoàn thiện demo.

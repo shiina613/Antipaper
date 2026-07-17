@@ -1,67 +1,100 @@
-# Paperless Meetings MVP Architecture
+# Kiến trúc Antipaper
 
-## Goal
+## 1. Mục tiêu thiết kế
 
-Help provincial officials understand long PDF/Word meeting documents quickly by producing:
+- Tạo báo cáo từ tài liệu 40+ trang trong dưới 60 giây.
+- Mọi kết quả quan trọng truy ngược được đến trang và mục/điều.
+- Đủ đơn giản để 5 người tích hợp trong 48 giờ.
+- Có đường nâng cấp an toàn cho triển khai tại UBND.
 
-- Structured summaries.
-- Specialized terminology explanations.
-- Suggested discussion questions.
-- Document-grounded Q&A with page citations.
+## 2. Kiến trúc hackathon
 
-## Processing Model
+```text
+Next.js
+  │ upload / polling / Q&A
+  ▼
+FastAPI ── Job store in-memory ── Cache theo SHA-256
+  │
+  ├─ Trích xuất: PyMuPDF / python-docx
+  ├─ Parse cấu trúc: Chương → Mục → Điều → Khoản → Trang
+  ├─ AI song song: tóm tắt / thuật ngữ / câu hỏi
+  ├─ Văn bản liên quan: căn cứ trong văn bản + catalog cục bộ
+  └─ Truy hồi trong RAM → Q&A → kiểm tra citation
+```
 
-1. **Document ingestion**
-   - Current MVP supports native PDFs.
-   - Word support can be added through a separate loader while preserving the same downstream chunk model.
+Streamlit được giữ làm giao diện dự phòng nếu Next.js chưa tích hợp ổn định trước giờ 32.
 
-2. **Fast extraction pipeline**
-   - Render PDF pages with PyMuPDF.
-   - Detect table bounding boxes with YOLOv8.
-   - Extract native PDF text outside table areas to avoid duplicated/noisy table text.
-   - Convert detected table crops into markdown placeholders for the MVP.
-   - Stitch text and markdown tables by vertical page position.
+## 3. Luồng xử lý
 
-3. **Meeting intelligence layer**
-   - Build page-level chunks with citations.
-   - Generate structured summary sections:
-     - Context.
-     - Main content.
-     - Decision points.
-     - Impact.
-     - Risks and notes.
-   - Detect specialized terms and explain them.
-   - Generate critical-thinking questions for officials.
-   - Answer Vietnamese questions using retrieved chunks and page citations.
+1. Kiểm tra PDF/DOCX, kích thước và MIME; tạo `document_id` từ SHA-256.
+2. PDF có text layer đi thẳng qua PyMuPDF. Chỉ OCR trang gần như rỗng.
+3. Bảng native dùng `Page.find_tables()`; bảng ảnh/scan mới crop vùng và chạy PaddleOCR PP-StructureV3.
+4. Tách Chương/Mục/Điều/Khoản bằng regex; mỗi chunk/bảng giữ metadata nguồn.
+5. Chia tài liệu theo nhóm 6–8 trang; gọi LLM song song để tạo bản tóm tắt cục bộ.
+6. Một lượt reduce tạo bối cảnh, nội dung chính, điểm quyết định và tác động.
+7. Chạy song song thuật ngữ, câu hỏi và căn cứ liên quan bằng đầu ra có schema.
+8. Tạo index embedding in-memory cho Q&A. Citation được lấy từ chunk, không do LLM tự sinh.
+9. Lưu report theo `document_id`; frontend polling rồi hiển thị kết quả.
 
-## Data Sources
+## 4. Mô hình dữ liệu tối thiểu
 
-- Public documents from provincial People's Committees.
-- Government resolutions, legal normative documents, and public conference materials.
-- Public 40-60 page PDF samples for stress testing.
+```json
+{
+  "chunk_id": "P12-D7-K2-C1",
+  "page": 12,
+  "chapter": "Chương II",
+  "section": null,
+  "article": "Điều 7",
+  "clause": "Khoản 2",
+  "text": "..."
+}
+```
 
-## Deployment Roadmap
+LLM chỉ trả `chunk_id`. Backend kiểm tra ID tồn tại rồi chuyển thành “Trang 12, Điều 7, Khoản 2”. ID sai bị loại; không còn bằng chứng thì trả lời từ chối.
 
-1. **MVP demo**
-   - Local Python pipeline.
-   - PDF upload and console/Streamlit output.
-   - YOLO table detection with downloaded weights.
-   - Rule-based intelligence layer for offline testing.
+## 5. Ngân sách độ trễ
 
-2. **Pilot**
-   - Replace rule-based summarization and Q&A with a Vietnamese-capable LLM.
-   - Add vector retrieval with page, clause, and section metadata.
-   - Add Word document ingestion.
-   - Add reviewer workflow for terminology validation.
+| Giai đoạn | Mục tiêu P95 |
+|---|---:|
+| Nhận file và trích xuất | 5 giây |
+| Parse/chunk/index | 5 giây |
+| Map summary song song | 25 giây |
+| Reduce + terms + questions + related docs | 20 giây |
+| Lưu và trả kết quả | 5 giây |
+| Tổng | Dưới 60 giây |
 
-3. **Production**
-   - Deploy inside the People's Committee network or approved cloud.
-   - Add authentication, audit logs, document retention policy, and role-based access.
-   - Cache processed documents for meeting reuse.
-   - Monitor latency, answer citation quality, and hallucination rate.
+Benchmark tính từ lúc backend nhận đủ file đến khi report chuyển sang `completed`. Phải ghi cấu hình máy, model và cold/warm run.
 
-## Current Limitations
+## 6. Quyết định phạm vi
 
-- Table-to-markdown is still a placeholder.
-- The intelligence layer is rule-based and intended for local MVP testing.
-- The current test file `data/01.pdf` has 4 pages, so it does not prove the 40+ page submission requirement yet.
+| Quyết định | Lý do |
+|---|---|
+| Không chạy YOLO trên mọi trang | Tốn latency; văn bản demo có text layer và ít bảng phức tạp |
+| PaddleOCR chỉ là fallback | Table OCR nặng; chỉ chạy khi `find_tables()` không đọc được bảng ảnh/scan |
+| Không dùng LangChain | Giảm abstraction, dependency và thời gian debug |
+| Không dùng vector database | Một tài liệu 40–60 trang đủ nhỏ để index trong RAM |
+| Không OCR toàn tài liệu | Làm chậm luồng chính; OCR chỉ là fallback theo trang |
+| Không tìm kiếm web trực tiếp | Khó kiểm soát độ tin cậy; ưu tiên căn cứ trong tài liệu và catalog nguồn chính thống |
+
+## 7. Độ tin cậy và an toàn
+
+- Pydantic kiểm tra mọi output LLM; retry một lần khi sai schema.
+- Lưu page/section metadata ngay từ lúc trích xuất.
+- Q&A phải có citation hợp lệ hoặc từ chối.
+- Prompt và log không chứa API key; không log toàn văn tài liệu.
+- Demo chỉ dùng tài liệu công khai.
+
+## 8. Nguồn dữ liệu
+
+- Văn bản quy phạm pháp luật và Công báo từ nguồn chính thức của Chính phủ/Quốc hội.
+- Nghị quyết, kế hoạch và tài liệu họp công khai của UBND tỉnh.
+- Catalog phải lưu URL nguồn, số hiệu, ngày ban hành, trạng thái hiệu lực và thời điểm tải.
+- Các PDF hiện có cần bổ sung metadata nguồn trước khi nộp; không suy đoán nguồn chỉ từ tên file.
+
+## 9. Lộ trình triển khai tại UBND
+
+| Giai đoạn | Phạm vi |
+|---|---|
+| Hackathon | Một tài liệu/lần, dữ liệu công khai, cache cục bộ |
+| Pilot 1 đơn vị | SSO, phân quyền, audit log, object storage, reviewer thuật ngữ |
+| Triển khai thật | On-premise/approved cloud, mã hóa, retention policy, HA, giám sát chất lượng và chi phí |

@@ -1,41 +1,33 @@
-# Paperless Meetings Dashboard
+# Giao diện Antipaper
 
-Next.js dashboard frontend for the Paperless Meetings MVP, adapted from the ShadcnDeck ChatDeck shadcn template.
+Dashboard Next.js cho luồng upload tài liệu, xem báo cáo, mở citation và hỏi đáp trong cuộc họp.
 
-## Tech Stack
+## Trạng thái
 
-- Next.js 16
-- React 19
-- TypeScript
-- Tailwind CSS 4
-- shadcn/ui-style components
+- UI hiện dùng dữ liệu tĩnh trong `app/page.tsx`.
+- Chưa kết nối FastAPI và chưa upload file thật.
+- Hợp đồng tích hợp nằm tại `../docs/API_CONTRACT.md`.
 
-## Run Locally
+## Chạy local
 
 ```powershell
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Mở `http://localhost:3000`.
 
-## Build
+## Kiểm tra trước khi merge
 
 ```powershell
-npm run build
 npm run lint
+npm run build
 ```
 
-## Current Dashboard Sections
+## Phạm vi 48 giờ
 
-- Upload/document status hero.
-- Processing metrics from `data/01.pdf`.
-- Structured summary.
-- 10 terminology highlights with page references.
-- 5 suggested meeting questions.
-- Vietnamese Q&A answer with page citations.
-- Deployment roadmap for a provincial People's Committee pilot.
-
-## Next Integration Step
-
-The dashboard currently uses static demo data from the Python smoke test. The next step is to add a backend API endpoint that calls `scripts/demo_meeting_ai.py` or imports the Python pipeline directly, then replace static dashboard data with live upload results.
+1. Upload PDF/DOCX và hiển thị tiến độ xử lý.
+2. Hiển thị bốn phần tóm tắt, thuật ngữ, câu hỏi và văn bản liên quan.
+3. Bấm citation để mở đúng trang/mục.
+4. Chat tiếng Việt và hiển thị trạng thái từ chối khi thiếu bằng chứng.
+5. Có loading, error và retry; không giữ dữ liệu demo hard-code trong luồng chính.

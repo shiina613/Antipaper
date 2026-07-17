@@ -1,39 +1,53 @@
-# Paperless Meetings - 1 Page Demo Deck
+# Antipaper — Đọc 60 trang trước cuộc họp trong vài phút
 
-## Problem
+## Vấn đề
 
-Provincial officials often receive 40-60 page legal, administrative, and technical documents only one day before meetings. They lack time to read deeply, so meetings become longer and less prepared.
+Cán bộ thường nhận tài liệu họp 40–60 trang chỉ trước một ngày. Thuật ngữ phức tạp và thiếu thời gian chuẩn bị khiến cuộc họp phải giải thích lại từ đầu, kéo dài và thiếu phản biện.
 
-## Solution
+## Giải pháp
 
-An AI assistant that turns long meeting documents into:
+Tải PDF/DOCX lên, Antipaper trả về:
 
-- A structured summary.
-- Highlighted terminology with explanations.
-- Suggested questions for discussion.
-- Vietnamese Q&A grounded in page-level citations.
+- Tóm tắt: bối cảnh, nội dung chính, điểm cần quyết định, tác động.
+- Thuật ngữ/điều khoản quan trọng kèm giải thích ngắn.
+- Câu hỏi phản biện và văn bản liên quan cần tham khảo.
+- Hỏi đáp tiếng Việt, dẫn đúng trang và mục/điều.
 
-## MVP Workflow
+## Điểm khác biệt
+
+Antipaper không chỉ “chat với PDF”. Mỗi kết luận đi cùng bằng chứng; hệ thống không đủ nguồn sẽ từ chối thay vì đoán.
+
+## Luồng demo
 
 ```text
-PDF -> Page rendering -> YOLO table detection -> Native text masking
-    -> Table markdown -> Page stitching -> Summary / Terms / Questions / Q&A
+Upload tài liệu 40+ trang → Trích xuất cấu trúc → AI xử lý song song
+→ Báo cáo cuộc họp → Bấm citation mở đúng nguồn → Hỏi đáp tiếng Việt
 ```
 
-## Demo Criteria
+## Bằng chứng cần điền trước khi nộp
 
-- Upload a real document and extract content quickly.
-- Return structured summary sections.
-- Detect at least 10 specialized terms.
-- Generate at least 5 quality discussion questions.
-- Answer Vietnamese questions with page citations.
+| Chỉ số | Kết quả |
+|---|---|
+| Tài liệu demo | `[TÊN FILE]` — `[SỐ TRANG]` |
+| Thời gian tạo report | `[ĐIỀN SAU BENCHMARK]` |
+| Thuật ngữ đúng | `[ĐIỀN]/10` |
+| Câu hỏi đạt rubric | `[ĐIỀN]/5` |
+| Citation chính xác | `[ĐIỀN]%` |
 
-## Deployment Roadmap
+## Kiến trúc
 
-1. Local demo with public documents.
-2. Pilot with selected departments and validated terminology.
-3. Secure deployment with access control, audit logging, and cached processed documents.
+Next.js → FastAPI → PyMuPDF/DOCX → parser Chương/Mục/Điều → LLM có schema → retrieval in-memory → citation validator.
 
-## Value
+## Dữ liệu
 
-Officials can enter meetings with the core content, risks, decision points, and questions prepared before discussion starts.
+Văn bản quy phạm pháp luật, Công báo và tài liệu họp công khai từ nguồn chính thức; mỗi file giữ URL, số hiệu, ngày ban hành và trạng thái hiệu lực.
+
+## Lộ trình UBND
+
+1. Demo với văn bản công khai.
+2. Pilot tại một đơn vị với SSO, audit log và reviewer.
+3. Triển khai on-premise/approved cloud, phân quyền, mã hóa và chính sách lưu trữ.
+
+## Giá trị
+
+Giảm thời gian đọc trước họp, tăng chất lượng câu hỏi và giúp quyết định dựa trên đúng căn cứ trong tài liệu.
