@@ -2,10 +2,10 @@
 
 ## Vai trò
 
-Phụ trách nền chạy backend, API, điều phối, cache, đo hiệu năng và đóng gói demo.
+Phụ trách nền chạy backend, API, điều phối, cache, xử lý bottleneck runtime và đóng gói backend.
 
 **Nhánh:** `feat/hung-backend-runtime`
-**Khối lượng dự kiến:** 24 giờ công tập trung
+**Khối lượng dự kiến:** 18 giờ công tập trung
 **Người duyệt chính:** Tuấn
 
 ## Công việc
@@ -15,8 +15,9 @@ Phụ trách nền chạy backend, API, điều phối, cache, đo hiệu năng 
 | HUNG-01 | FastAPI skeleton, CORS, models và error format | 4 | H8 | Endpoints đúng `API_CONTRACT.md`; OpenAPI chạy được |
 | HUNG-02 | Upload, job status, in-memory store và cache SHA-256 | 6 | H16 | Request không block; polling hoạt động; cache hit rõ ràng |
 | HUNG-03 | Orchestrate ingestion, intelligence, retrieval và report | 4 | H24 | Một API flow hoàn chỉnh chạy trên `$DEMO_DOCUMENT_PATH` |
-| HUNG-04 | Benchmark từng stage và tối ưu concurrency/timeout | 6 | H32 | Có cold + 3 warm runs; ít nhất một run hợp lệ dưới 60 giây |
 | HUNG-05 | Health, log an toàn, script run và đóng gói deploy | 4 | H38 | Team chạy backend bằng một lệnh; không log key/toàn văn |
+
+> `HUNG-04` (6 giờ) được chuyển sang `TUNG-06` để cân bằng tải. Tùng sở hữu benchmark và bằng chứng nghiệm thu; Hùng chịu trách nhiệm sửa các bottleneck backend được phát hiện.
 
 ## API bắt buộc
 
@@ -31,6 +32,7 @@ Phụ trách nền chạy backend, API, điều phối, cache, đo hiệu năng 
 - Chốt Pydantic models với Tuấn tại H2.
 - Cấp mock endpoints cho Tùng từ H8.
 - Tích hợp output Hậu và Tùng Anh theo schema, không sửa field âm thầm.
+- Hỗ trợ `TUNG-06` bằng stage timing và xử lý lỗi concurrency/timeout trước H32.
 
 ## Ngoài phạm vi
 
@@ -43,5 +45,5 @@ Phụ trách nền chạy backend, API, điều phối, cache, đo hiệu năng 
 - [ ] API contract không bị phá vỡ.
 - [ ] Job failed/timeout trả lỗi rõ.
 - [ ] Cache theo content hash hoạt động.
-- [ ] Benchmark có cấu hình máy và commit.
+- [ ] Các bottleneck backend từ `TUNG-06` đã được xử lý hoặc ghi nhận rõ giới hạn.
 - [ ] Backend khởi động bằng một lệnh.

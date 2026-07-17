@@ -33,9 +33,9 @@ Xem trạng thái chi tiết tại [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGR
 |---|---|---|
 | Hậu | Tóm tắt, thuật ngữ, câu hỏi AI và OCR fallback | [TASKS_HAU.md](docs/TASKS_HAU.md) |
 | Tuấn | Nhập PDF/DOCX, parse cấu trúc, citation và LLM client | [TASKS_TUAN.md](docs/TASKS_TUAN.md) |
-| Tùng | Giao diện, tích hợp, demo và deck | [TASKS_TUNG.md](docs/TASKS_TUNG.md) |
+| Tùng | Giao diện, tích hợp, benchmark nghiệm thu, demo và deck | [TASKS_TUNG.md](docs/TASKS_TUNG.md) |
 | Tùng Anh | Truy hồi, Q&A, văn bản liên quan, kiểm tra citation | [TASKS_TUNG_ANH.md](docs/TASKS_TUNG_ANH.md) |
-| Hưng | FastAPI, job/cache, đo hiệu năng và đóng gói chạy | [TASKS_HUNG.md](docs/TASKS_HUNG.md) |
+| Hưng | FastAPI, job/cache, xử lý bottleneck runtime và đóng gói backend | [TASKS_HUNG.md](docs/TASKS_HUNG.md) |
 
 ## Cấu trúc chính
 
