@@ -29,7 +29,7 @@ Phụ trách nền chạy backend, API, điều phối, cache, xử lý bottlene
 
 ## Phụ thuộc
 
-- Chốt Pydantic models với Tuấn tại H2.
+- Nhận report schema/mock từ Hậu tại H3; chốt document Pydantic models với Tuấn tại H4.
 - Cấp mock endpoints cho Tùng từ H8.
 - Tích hợp output Hậu và Tùng Anh theo schema, không sửa field âm thầm.
 - Hỗ trợ `TUNG-06` bằng stage timing và xử lý lỗi concurrency/timeout trước H32.

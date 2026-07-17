@@ -12,11 +12,11 @@ Phụ trách luồng nhập/chuẩn hóa tài liệu và LLM client dùng chung.
 
 | ID | Việc | Giờ | Hạn | Điều kiện hoàn thành |
 |---|---|---:|---|---|
-| TUAN-01 | Chốt `NormalizedDocument`, `Page`, `Chunk`, `Citation` với Hưng | 3 | H2 | Pydantic models và JSON mẫu khớp `API_CONTRACT.md` |
-| TUAN-02 | Tạo fast path PDF/text/bảng native bằng PyMuPDF | 6 | H10 | Đủ số trang; `find_tables()` xuất Markdown; YOLO không chạy mặc định |
-| TUAN-03 | Thêm DOCX loader và validation MIME/kích thước | 5 | H16 | PDF/DOCX trả cùng schema; file lỗi có exception chuẩn |
+| TUAN-01 | Chốt `NormalizedDocument`, `Page`, `Chunk`, `Citation` với Hưng và xuất normalized fixture tối thiểu | 3 | H4 | Pydantic models và JSON mẫu khớp `API_CONTRACT.md`; thay được mock của Hậu mà không đổi consumer |
+| TUAN-05 | LLM client dùng chung: config, timeout, retry và schema validation | 4 | H8 | Model cấu hình qua env; lỗi/timeout chuẩn; inject được vào intelligence implementation của Hậu |
+| TUAN-02 | Tạo fast path PDF/text/bảng native bằng PyMuPDF | 6 | H14 | Đủ số trang; `find_tables()` xuất Markdown; YOLO không chạy mặc định |
 | TUAN-04 | Parse Chương/Mục/Điều/Khoản và tạo chunk/citation ID | 6 | H20 | Citation map ngược đúng nguồn; có normalized JSON của tài liệu demo |
-| TUAN-05 | LLM client dùng chung: config, timeout, retry và schema validation | 4 | H12 | Model cấu hình qua env; lỗi/timeout chuẩn; Hậu gọi được bằng interface chung |
+| TUAN-03 | Thêm DOCX loader và validation MIME/kích thước | 5 | H25 | PDF/DOCX trả cùng schema; file lỗi có exception chuẩn |
 
 ## Giao diện bàn giao
 
@@ -29,10 +29,10 @@ Module ingestion không gọi LLM và phải deterministic. LLM client nằm ở
 
 ## Phụ thuộc
 
-- Chốt model Pydantic với Hưng tại H2.
-- Chốt cấu hình model, timeout và error contract với Hậu/Hưng tại H6.
-- Bàn giao normalized fixture cho Hậu và Tùng Anh chậm nhất H10.
-- Pipeline chỉ gọi OCR text/table adapter của Hậu khi native extraction không đạt ngưỡng.
+- Dùng `IntelligenceReport`, mock JSON và quy tắc citation do Hậu chốt tại H3; không yêu cầu Hậu chờ model ingestion hoàn chỉnh.
+- Chốt model Pydantic với Hưng tại H4 và bàn giao normalized fixture tối thiểu cho Hậu/Tùng Anh ngay tại mốc này.
+- Chốt cấu hình model, timeout và error contract với Hậu/Hưng, rồi bàn giao client inject được tại H8.
+- `TUAN-02` chạy trong H8–H14: phần fast path native không phụ thuộc OCR; OCR adapter Hậu đã bàn giao tại H7 chỉ được nối vào nhánh fallback khi native extraction không đạt ngưỡng.
 - Thông báo trước khi thay đổi `chunk_id` hoặc metadata citation.
 
 ## Ngoài phạm vi

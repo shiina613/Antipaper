@@ -29,9 +29,9 @@ Phụ trách trải nghiệm người dùng, tích hợp giao diện, demo xuyê
 
 ## Phụ thuộc
 
-- Dùng mock JSON theo `API_CONTRACT.md` ngay từ H2.
+- Dùng report mock JSON do Hậu chốt theo `API_CONTRACT.md` tại H3; trước mốc này dựng layout bằng type trong contract, không tự thêm field.
 - Nhận endpoints từ Hưng tại H8.
-- Nhận report schema từ Hậu và Q&A schema từ Tùng Anh; không tự suy diễn field.
+- Nhận report schema từ Hậu tại H3 và Q&A schema từ Tùng Anh trước H12; không tự suy diễn field.
 - Nhận stage timing và hỗ trợ xử lý bottleneck từ Hùng để hoàn thành `TUNG-06` trước H32.
 
 ## Ngoài phạm vi

@@ -12,11 +12,21 @@ Phụ trách lớp sinh nội dung AI và OCR fallback theo trang.
 
 | ID | Việc | Giờ | Hạn | Điều kiện hoàn thành |
 |---|---|---:|---|---|
-| HAU-01 | Prompt, schema đầu ra và fallback chất lượng dùng `chunk_id` | 3 | H6 | Output đúng schema; thiếu bằng chứng không tạo nội dung |
-| HAU-02 | Tóm tắt map-reduce theo batch 6–8 trang | 7 | H16 | Đủ bối cảnh, nội dung chính, điểm quyết định, tác động; mỗi ý có citation |
-| HAU-03 | Nhận diện và giải thích thuật ngữ theo ngữ cảnh | 5 | H20 | Tài liệu demo có ≥10 thuật ngữ, giải thích ngắn và có nguồn |
+| HAU-01 | Chốt prompt, `IntelligenceReport`, schema output LLM, mock `NormalizedDocument` tối thiểu và fallback dùng `chunk_id` | 3 | H3 | Hưng/Tùng/Tùng Anh dùng được mock JSON; thiếu bằng chứng không tạo nội dung |
+| HAU-05 | OCR text và bảng ảnh bằng PaddleOCR PP-StructureV3; chốt adapter và ngưỡng gọi OCR với Tuấn | 4 | H7 | Adapter chạy độc lập bằng `image_bytes`; một bảng mẫu giữ đúng hàng/cột và xuất Markdown/JSON |
+| HAU-02 | Tóm tắt map-reduce theo batch 6–8 trang | 7 | H14 | Đủ bối cảnh, nội dung chính, điểm quyết định, tác động; mỗi ý có citation |
+| HAU-03 | Nhận diện và giải thích thuật ngữ theo ngữ cảnh | 5 | H19 | Tài liệu demo có ≥10 thuật ngữ, giải thích ngắn và có nguồn |
 | HAU-04 | Sinh câu hỏi phản biện và rationale | 5 | H24 | Có ≥5 câu riêng theo tài liệu, không trùng ý, mỗi câu có citation |
-| HAU-05 | OCR text và bảng ảnh bằng PaddleOCR PP-StructureV3 | 4 | H30 | Chỉ OCR vùng cần thiết; một bảng mẫu giữ đúng hàng/cột và xuất Markdown/JSON |
+
+## Thứ tự thực thi không chờ
+
+| Khoảng giờ | Việc Hậu thực hiện | Đầu vào không phụ thuộc người khác |
+|---|---|---|
+| H0–H3 | `HAU-01`: schema, prompt, mock và validator whitelist `chunk_id` | `API_CONTRACT.md` và fixture tối thiểu do Hậu tạo cho test contract |
+| H3–H7 | `HAU-05`: OCR adapter và test ảnh/bảng | `image_bytes`, bbox/page giả lập; không cần pipeline hoàn chỉnh |
+| H7–H14 | `HAU-02`: map-reduce | Gọi qua interface `call_llm` được inject; dùng test double cho đến khi client thật sẵn sàng |
+| H14–H19 | `HAU-03`: thuật ngữ | Dùng cùng fixture/chunk contract; thay fixture thật không đổi logic |
+| H19–H24 | `HAU-04`: câu hỏi phản biện và rubric | Dùng cùng fixture/chunk contract và citation whitelist |
 
 ## Giao diện bàn giao
 
@@ -30,11 +40,12 @@ def ocr_table(image_bytes: bytes) -> TableData: ...
 
 ## Phụ thuộc
 
-- Dùng normalized fixture của Tuấn từ H10.
-- Nhận ảnh trang/bbox bảng và ngưỡng kích hoạt OCR từ pipeline của Tuấn.
-- Dùng LLM client chung do Tuấn bàn giao; không tạo client thứ hai.
-- Dùng citation validator của Tùng Anh trước khi trả report.
-- Bàn giao schema report cho Hưng và Tùng chậm nhất H8, có mock JSON.
+- Không có đầu vào từ thành viên khác chặn Hậu trong H0–H24: trước khi implementation thật được bàn giao, test dùng fixture/test double theo đúng interface đã chốt.
+- Hậu bàn giao report schema, mock JSON và quy tắc citation cho Hưng, Tùng, Tùng Anh tại H3; đây là contract nguồn cho các consumer.
+- Hậu bàn giao `ocr_page`, `ocr_table` và ngưỡng kích hoạt cho Tuấn tại H7; Tuấn chịu trách nhiệm router page/bbox trong pipeline.
+- Khi fixture `NormalizedDocument` của Tuấn có tại H4, chỉ thay fixture tối thiểu; không đổi prompt hoặc report schema nếu không có migration được cả hai xác nhận.
+- Khi LLM client chung của Tuấn có tại H8, inject client đó vào implementation đã kiểm thử; Hậu không tạo client production thứ hai.
+- Trước H8, Hậu tự lọc citation bằng whitelist `chunk_id` của document. Từ H8, tích hợp validator của Tùng Anh như lớp kiểm tra cuối; thiếu validator thật không được phép làm mất fail-closed behavior.
 
 ## Ngoài phạm vi
 
