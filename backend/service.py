@@ -5,13 +5,15 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 import hashlib
+import os
 import threading
 import time
 from pathlib import Path
 
 from .errors import ApiError
-from .orchestrator import DocumentOrchestrator, ProcessedDocument
+from .orchestrator import DocumentOrchestrator, ProcessedDocument, StitchedPage
 from .schemas import (
     DocumentReport,
     DocumentStatus,
@@ -26,6 +28,18 @@ from .schemas import (
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 PROCESSING_WAIT_TIMEOUT_SECONDS = 15.0
+STAGE_QUEUED = "queued"
+STAGE_PARSING = "parsing"
+STAGE_GENERATING = "generating"
+STAGE_READY = "ready"
+STAGE_FAILED = "failed"
+FAILED_ERROR_STATUSES = {
+    "FILE_TOO_LARGE": 413,
+    "UNSUPPORTED_FILE": 415,
+    "INVALID_OUTPUT": 502,
+    "MODEL_TIMEOUT": 504,
+    "PROCESSING_FAILED": 409,
+}
 
 
 @dataclass
@@ -60,11 +74,14 @@ class DocumentRecord:
 class DocumentStore:
     """Thread-safe store and scheduler for uploaded documents."""
 
-    def __init__(self) -> None:
+    def __init__(self, artifact_root: Path | None = None) -> None:
         self._lock = threading.RLock()
         self._documents: dict[str, DocumentRecord] = {}
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="antipaper-job")
         self._orchestrator = DocumentOrchestrator()
+        root = artifact_root or Path(os.getenv("ARTIFACT_DIR", ".artifacts"))
+        self._artifact_root = (root.expanduser() / "documents").resolve()
+        self._artifact_root.mkdir(parents=True, exist_ok=True)
 
     def submit_upload(self, file_name: str, file_bytes: bytes) -> tuple[DocumentRecord, bool]:
         if len(file_bytes) > MAX_UPLOAD_BYTES:
@@ -92,6 +109,13 @@ class DocumentStore:
                 existing.updated_at = datetime.now(timezone.utc)
                 return existing, True
 
+            rehydrated = self._rehydrate_from_artifacts(document_id)
+            if rehydrated is not None:
+                rehydrated.cached = True
+                rehydrated.updated_at = datetime.now(timezone.utc)
+                self._documents[document_id] = rehydrated
+                return rehydrated, True
+
             record = DocumentRecord(
                 document_id=document_id,
                 file_name=file_name,
@@ -110,15 +134,21 @@ class DocumentStore:
 
     def get(self, document_id: str) -> DocumentRecord:
         with self._lock:
-            try:
-                return self._documents[document_id]
-            except KeyError as exc:
-                raise ApiError(
-                    code="DOCUMENT_NOT_FOUND",
-                    message="Document not found.",
-                    status_code=404,
-                    retryable=False,
-                ) from exc
+            record = self._documents.get(document_id)
+            if record is not None:
+                return record
+
+            rehydrated = self._rehydrate_from_artifacts(document_id)
+            if rehydrated is not None:
+                self._documents[document_id] = rehydrated
+                return rehydrated
+
+            raise ApiError(
+                code="DOCUMENT_NOT_FOUND",
+                message="Document not found.",
+                status_code=404,
+                retryable=False,
+            )
 
     def process_document(self, document_id: str) -> None:
         record = self.get(document_id)
@@ -127,12 +157,14 @@ class DocumentStore:
 
         start = time.perf_counter()
         try:
-            self._mark_processing(record, "parsing", 15)
+            self._mark_processing(record, STAGE_PARSING, 20)
+            self._mark_processing(record, STAGE_GENERATING, 60)
             result = self._orchestrator.process(
                 document_id=record.document_id,
                 file_name=record.file_name,
                 file_bytes=record.file_bytes,
             )
+            self._validate_orchestration_result(record, result)
             processing_seconds = round(time.perf_counter() - start, 3)
             record.processed_document = result.processed_document
             record.processed_document.processing_seconds = processing_seconds
@@ -140,15 +172,24 @@ class DocumentStore:
             record.page_count = result.processed_document.page_count
             record.report = result.report.model_copy(update={"processing_seconds": processing_seconds})
             record.status = "completed"
-            record.stage = "ready"
+            record.stage = STAGE_READY
             record.progress = 100
             record.error = None
             record.processing_seconds = processing_seconds
             record.processed_at = datetime.now(timezone.utc)
             record.updated_at = datetime.now(timezone.utc)
-        except ApiError:
-            self._mark_failed(record, "PROCESSING_FAILED", "Document processing failed.")
+            self._persist_artifacts(record)
+        except ApiError as exc:
+            self._mark_failed(record, exc.code, exc.message)
             raise
+        except ValueError as exc:
+            self._mark_failed(record, "INVALID_OUTPUT", str(exc))
+            raise ApiError(
+                code="INVALID_OUTPUT",
+                message="Document processing returned invalid output.",
+                status_code=502,
+                retryable=True,
+            ) from exc
         except Exception as exc:  # pragma: no cover - defensive fallback
             self._mark_failed(record, "PROCESSING_FAILED", str(exc))
         finally:
@@ -169,6 +210,8 @@ class DocumentStore:
     def get_report(self, document_id: str) -> DocumentReport:
         record = self.ensure_processed(document_id)
         if record.report is None:
+            if record.status == "failed" and record.error:
+                raise self._api_error_from_record_error(record.error)
             raise ApiError(
                 code="PROCESSING_FAILED",
                 message="Report is not ready yet.",
@@ -180,6 +223,8 @@ class DocumentStore:
     def get_page(self, document_id: str, page_number: int) -> PageResponse:
         record = self.ensure_processed(document_id)
         if record.processed_document is None:
+            if record.status == "failed" and record.error:
+                raise self._api_error_from_record_error(record.error)
             raise ApiError(
                 code="PROCESSING_FAILED",
                 message="Document pages are not ready yet.",
@@ -204,17 +249,22 @@ class DocumentStore:
     def answer_question(self, document_id: str, question: str) -> QuestionResponse:
         record = self.ensure_processed(document_id)
         if record.processed_document is None:
+            if record.status == "failed" and record.error:
+                raise self._api_error_from_record_error(record.error)
             raise ApiError(
                 code="PROCESSING_FAILED",
                 message="Document is not ready for question answering.",
                 status_code=409,
                 retryable=True,
             )
-        return self._orchestrator.answer_question(record.processed_document, question)
+        start = time.perf_counter()
+        response = self._orchestrator.answer_question(record.processed_document, question)
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        return response.model_copy(update={"latency_ms": latency_ms})
 
     def _start_processing(self, record: DocumentRecord) -> None:
         record.status = "queued"
-        record.stage = "queued"
+        record.stage = STAGE_QUEUED
         record.progress = 0
         record.error = None
         record.updated_at = datetime.now(timezone.utc)
@@ -249,10 +299,40 @@ class DocumentStore:
 
     def _mark_failed(self, record: DocumentRecord, code: str, message: str) -> None:
         record.status = "failed"
-        record.stage = "failed"
+        record.stage = STAGE_FAILED
         record.progress = 100
         record.error = f"{code}: {message}"
         record.updated_at = datetime.now(timezone.utc)
+        self._persist_artifacts(record)
+
+    def _validate_orchestration_result(
+        self,
+        record: DocumentRecord,
+        result: object,
+    ) -> None:
+        if not hasattr(result, "processed_document") or not hasattr(result, "report"):
+            raise ValueError("Orchestrator returned an invalid result object.")
+
+        processed_document = getattr(result, "processed_document")
+        report = getattr(result, "report")
+        if processed_document is None or report is None:
+            raise ValueError("Orchestrator returned empty processing output.")
+
+        if getattr(report, "document_id", None) != record.document_id:
+            raise ValueError("Report document_id does not match the uploaded document.")
+        if getattr(report, "page_count", None) != getattr(processed_document, "page_count", None):
+            raise ValueError("Report page_count does not match the processed document.")
+
+    def _api_error_from_record_error(self, error_text: str) -> ApiError:
+        code, _, message = error_text.partition(": ")
+        code = code or "PROCESSING_FAILED"
+        message = message or "Document processing failed."
+        return ApiError(
+            code=code,
+            message=message,
+            status_code=FAILED_ERROR_STATUSES.get(code, 409),
+            retryable=code in {"INVALID_OUTPUT", "MODEL_TIMEOUT", "PROCESSING_FAILED"},
+        )
 
     def _build_pages(self, processed_document: ProcessedDocument) -> list[PageRecord]:
         pages: list[PageRecord] = []
@@ -267,12 +347,146 @@ class DocumentStore:
             )
         return pages
 
+    def _artifact_dir(self, document_id: str) -> Path:
+        return self._artifact_root / document_id
+
+    def _manifest_path(self, document_id: str) -> Path:
+        return self._artifact_dir(document_id) / "manifest.json"
+
+    def _pages_path(self, document_id: str) -> Path:
+        return self._artifact_dir(document_id) / "pages.json"
+
+    def _report_path(self, document_id: str) -> Path:
+        return self._artifact_dir(document_id) / "report.json"
+
+    def _persist_artifacts(self, record: DocumentRecord) -> None:
+        try:
+            artifact_dir = self._artifact_dir(record.document_id)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            self._manifest_path(record.document_id).write_text(
+                json.dumps(self._serialize_manifest(record), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            if record.status == "completed" and record.report is not None:
+                self._pages_path(record.document_id).write_text(
+                    json.dumps(self._serialize_pages(record.pages), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                self._report_path(record.document_id).write_text(
+                    record.report.model_dump_json(indent=2),
+                    encoding="utf-8",
+                )
+        except Exception:  # pragma: no cover - artifact persistence is best effort
+            return
+
+    def _rehydrate_from_artifacts(self, document_id: str) -> DocumentRecord | None:
+        manifest_path = self._manifest_path(document_id)
+        report_path = self._report_path(document_id)
+        pages_path = self._pages_path(document_id)
+        if not manifest_path.exists():
+            return None
+
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            record = DocumentRecord(
+                document_id=document_id,
+                file_name=str(manifest["file_name"]),
+                file_size_bytes=int(manifest["file_size_bytes"]),
+                file_bytes=b"",
+                status=str(manifest["status"]),
+                stage=str(manifest["stage"]),
+                progress=int(manifest["progress"]),
+                error=manifest.get("error"),
+                created_at=datetime.fromisoformat(str(manifest["created_at"])),
+                updated_at=datetime.fromisoformat(str(manifest["updated_at"])),
+                processed_at=self._parse_datetime(manifest.get("processed_at")),
+                processing_seconds=float(manifest.get("processing_seconds", 0.0)),
+                cached=bool(manifest.get("cached", False)),
+                page_count=int(manifest.get("page_count", 0)),
+            )
+            if record.status == "completed":
+                if not report_path.exists() or not pages_path.exists():
+                    return None
+                record.report = DocumentReport.model_validate_json(report_path.read_text(encoding="utf-8"))
+                record.pages = self._deserialize_pages(json.loads(pages_path.read_text(encoding="utf-8")))
+                record.processed_document = ProcessedDocument(
+                    source_name=record.file_name,
+                    page_count=record.page_count,
+                    stitched_pages=[
+                        StitchedPage(page_number=page.page_number, content=page.text)
+                        for page in record.pages
+                    ],
+                )
+            return record
+        except Exception:  # pragma: no cover - corrupted artifacts are treated as cache miss
+            return None
+
+    def _serialize_manifest(self, record: DocumentRecord) -> dict[str, object]:
+        return {
+            "document_id": record.document_id,
+            "file_name": record.file_name,
+            "file_size_bytes": record.file_size_bytes,
+            "status": record.status,
+            "stage": record.stage,
+            "progress": record.progress,
+            "error": record.error,
+            "created_at": record.created_at.isoformat(),
+            "updated_at": record.updated_at.isoformat(),
+            "processed_at": record.processed_at.isoformat() if record.processed_at else None,
+            "processing_seconds": record.processing_seconds,
+            "cached": record.cached,
+            "page_count": record.page_count,
+        }
+
+    def _serialize_pages(self, pages: list[PageRecord]) -> list[dict[str, object]]:
+        return [
+            {
+                "page_number": page.page_number,
+                "text": page.text,
+                "blocks": [
+                    {
+                        "kind": block.kind,
+                        "text": block.text,
+                        "page_number": block.page_number,
+                    }
+                    for block in page.blocks
+                ],
+            }
+            for page in pages
+        ]
+
+    def _deserialize_pages(self, raw_pages: list[dict[str, object]]) -> list[PageRecord]:
+        pages: list[PageRecord] = []
+        for raw_page in raw_pages:
+            blocks = [
+                PageBlock(
+                    kind=str(block.get("kind", "text")),
+                    text=str(block.get("text", "")),
+                    page_number=int(block.get("page_number", raw_page["page_number"])),
+                )
+                for block in raw_page.get("blocks", [])
+            ]
+            pages.append(
+                PageRecord(
+                    page_number=int(raw_page["page_number"]),
+                    text=str(raw_page.get("text", "")),
+                    blocks=blocks,
+                )
+            )
+        return pages
+
+    @staticmethod
+    def _parse_datetime(value: object) -> datetime | None:
+        if value is None or not isinstance(value, str):
+            return None
+        return datetime.fromisoformat(value)
+
 
 class AntipaperService:
     """Facade used by the FastAPI routes."""
 
-    def __init__(self) -> None:
-        self.store = DocumentStore()
+    def __init__(self, artifact_root: Path | None = None) -> None:
+        self.store = DocumentStore(artifact_root=artifact_root)
 
     def submit_document(self, file_name: str, file_bytes: bytes) -> UploadResponse:
         record, cached = self.store.submit_upload(file_name, file_bytes)

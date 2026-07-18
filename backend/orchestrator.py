@@ -11,7 +11,10 @@ import zipfile
 
 import fitz
 
-from intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
+try:
+    from intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
+except ModuleNotFoundError:  # Running backend from repo root without pytest PYTHONPATH.
+    from src.intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
 
 from .schemas import (
     Citation,
@@ -41,6 +44,7 @@ class ProcessedDocument:
     source_name: str
     page_count: int
     stitched_pages: list[StitchedPage]
+    chunks: list["_Chunk"] = field(default_factory=list, repr=False, compare=False)
     processing_seconds: float = 0.0
 
     @property
@@ -66,6 +70,8 @@ class DocumentOrchestrator:
 
     def process(self, *, document_id: str, file_name: str, file_bytes: bytes) -> OrchestrationResult:
         processed_document = self._load_document(file_name=file_name, file_bytes=file_bytes)
+        if not processed_document.chunks:
+            processed_document.chunks = self._engine.extract_chunks(processed_document)
 
         report = self._build_report(
             document_id=document_id,

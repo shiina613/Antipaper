@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import TimeoutError as FutureTimeoutError
+import time
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
-from backend.main import app
+from backend.errors import ApiError
+from backend.main import app, service
+from backend.service import AntipaperService
 
 
 client = TestClient(app)
@@ -76,3 +82,124 @@ def test_second_upload_hits_cache() -> None:
 
     assert second_payload["document_id"] == first_payload["document_id"]
     assert second_payload["cached"] is True
+
+
+def test_artifact_cache_survives_new_service_instance(tmp_path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    first_service = AntipaperService(artifact_root=artifact_root)
+
+    first_upload = first_service.submit_document(
+        "demo.pdf",
+        b"%PDF-1.4 Antipaper sample upload",
+    )
+    document_id = first_upload.document_id
+    first_service.get_report(document_id)
+
+    rehydrated_service = AntipaperService(artifact_root=artifact_root)
+    second_upload = rehydrated_service.submit_document(
+        "demo.pdf",
+        b"%PDF-1.4 Antipaper sample upload",
+    )
+
+    assert second_upload.document_id == document_id
+    assert second_upload.cached is True
+    assert second_upload.status == "completed"
+
+    report = rehydrated_service.get_report(document_id)
+    assert report.document_id == document_id
+
+
+def test_too_large_file_returns_standard_error_envelope() -> None:
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("demo.pdf", b"x" * (25 * 1024 * 1024 + 1), "application/pdf")},
+    )
+    assert response.status_code == 413
+    payload = response.json()
+    assert payload["error"]["code"] == "FILE_TOO_LARGE"
+    assert payload["error"]["retryable"] is False
+
+
+def test_broken_docx_marks_document_as_failed() -> None:
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("broken.docx", b"not-a-real-docx-archive", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+    )
+    assert response.status_code == 202
+    document_id = response.json()["document_id"]
+
+    report = client.get(f"/api/v1/documents/{document_id}/report")
+    assert report.status_code == 409
+    assert report.json()["error"]["code"] == "PROCESSING_FAILED"
+
+    status = client.get(f"/api/v1/documents/{document_id}/status")
+    assert status.status_code == 200
+    status_payload = status.json()
+    assert status_payload["status"] == "failed"
+    assert status_payload["error"] is not None
+
+
+def test_report_timeout_returns_model_timeout(monkeypatch) -> None:
+    def slow_process(document_id):  # noqa: ANN001
+        time.sleep(2.0)
+
+    def raise_timeout(record, timeout=15.0):  # noqa: ANN001, ARG001
+        raise ApiError(
+            code="MODEL_TIMEOUT",
+            message="Document processing timed out.",
+            status_code=504,
+            retryable=True,
+        )
+
+    monkeypatch.setattr(service.store, "process_document", slow_process)
+    monkeypatch.setattr(service.store, "_wait_for_completion", raise_timeout)
+
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("demo-timeout.pdf", b"%PDF-1.4 Antipaper sample upload timeout", "application/pdf")},
+    )
+    document_id = response.json()["document_id"]
+
+    report = client.get(f"/api/v1/documents/{document_id}/report")
+    assert report.status_code == 504
+    payload = report.json()
+    assert payload["error"]["code"] == "MODEL_TIMEOUT"
+    assert payload["error"]["retryable"] is True
+
+
+def test_question_without_evidence_returns_empty_citations() -> None:
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("demo.pdf", b"%PDF-1.4 Antipaper sample upload", "application/pdf")},
+    )
+    document_id = response.json()["document_id"]
+
+    answer = client.post(
+        f"/api/v1/documents/{document_id}/questions",
+        json={"question": "Ngân sách và trách nhiệm triển khai là gì?"},
+    )
+    assert answer.status_code == 200
+    payload = answer.json()
+    assert payload["insufficient_evidence"] is True
+    assert payload["citation_ids"] == []
+
+
+def test_invalid_orchestration_output_returns_invalid_output(monkeypatch) -> None:
+    def bad_process(*, document_id, file_name, file_bytes):  # noqa: ANN001
+        processed_document = SimpleNamespace(page_count=2, stitched_pages=[])
+        report = SimpleNamespace(document_id=document_id, page_count=1)
+        return SimpleNamespace(processed_document=processed_document, report=report)
+
+    monkeypatch.setattr(service.store._orchestrator, "process", bad_process)
+
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("invalid-output.pdf", b"%PDF-1.4 invalid output", "application/pdf")},
+    )
+    document_id = response.json()["document_id"]
+
+    report = client.get(f"/api/v1/documents/{document_id}/report")
+    assert report.status_code == 502
+    payload = report.json()
+    assert payload["error"]["code"] == "INVALID_OUTPUT"
+    assert payload["error"]["retryable"] is True
