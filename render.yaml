@@ -8,5 +8,7 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: PROCESSING_DEADLINE_SECONDS
+        value: "180"
       - key: OPENAI_API_KEY
         sync: false
