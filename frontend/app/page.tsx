@@ -1,27 +1,30 @@
 "use client";
 
-import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
   BookOpenText,
   CheckCircle2,
-  CircleHelp,
-  Clock3,
-  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Eye,
+  FileQuestion,
   FileText,
   FileUp,
+  History as HistoryIcon,
+  LayoutDashboard,
+  LibraryBig,
   LoaderCircle,
-  Copy,
+  Menu,
   MessageSquareText,
-  Plus,
+  MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Quote,
   RefreshCcw,
-  SearchCheck,
   SendHorizontal,
-  Settings,
-  ThumbsDown,
-  ThumbsUp,
-  Upload,
+  Tags,
+  X,
 } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
@@ -29,48 +32,34 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   type ApiMode,
+  type CitationMeta,
   type DocumentStatus,
+  type PageResponse,
   type ProcessingStage,
   type ReportResponse,
   type StatusResponse,
+  type TaskHistoryItem,
+  type TaskHistoryPage,
+  type TaskType,
   askDocumentQuestion,
   citationLabel,
-  getDocumentReport,
   getDocumentPage,
+  getDocumentReport,
   getDocumentStatus,
+  getTaskHistory,
+  mockDocumentId,
   mockReport,
   stageLabel,
-  type CitationMeta,
-  type PageResponse,
-  type QuestionResponse,
   uploadDocument,
   validateDocumentFile,
 } from "@/lib/antipaper-api";
 import { cn } from "@/lib/utils";
 
-type ViewKey = "upload" | "processing" | "report" | "qa";
-
-const navItems: Array<{ key: ViewKey; label: string; icon: LucideIcon }> = [
-  { key: "upload", label: "Tải lên", icon: Upload },
-  { key: "processing", label: "Trích xuất", icon: SearchCheck },
-  { key: "report", label: "Tóm tắt", icon: BookOpenText },
-  { key: "qa", label: "Citation", icon: Quote },
-];
-
-const initialStatus: StatusResponse = {
-  document_id: mockReport.document_id,
-  status: "completed",
-  stage: "completed",
-  progress: 100,
-  elapsed_seconds: mockReport.processing_seconds,
-  error: null,
-};
+type AppView = "upload" | "document" | "history";
+type DocumentTab = "overview" | "terms" | "questions" | "related";
 
 type ChatMessage =
-  | {
-      role: "user";
-      text: string;
-    }
+  | { role: "user"; text: string }
   | {
       role: "assistant";
       text: string;
@@ -79,49 +68,178 @@ type ChatMessage =
       latencyMs: number;
     };
 
-const initialMessages: ChatMessage[] = [
+const emptyHistory: TaskHistoryPage = { items: [], total: 0, limit: 20, offset: 0 };
+const ACTIVE_DOCUMENT_STORAGE_KEY = "antipaper.active-document-id";
+
+const previewHistoryItems: TaskHistoryItem[] = [
   {
-    role: "user",
-    text: "Tổng doanh thu thuần của mảng dịch vụ đám mây trong quý 3 là bao nhiêu, và có sự tăng trưởng nào so với cùng kỳ năm ngoái không?",
+    task_id: "preview-upload-current",
+    task_type: "document_processing",
+    document_id: mockDocumentId,
+    display_name: mockReport.file_name,
+    status: "completed",
+    stage: "ready",
+    progress: 100,
+    cached: false,
+    created_at: "2026-07-18T07:30:00Z",
+    started_at: "2026-07-18T07:30:01Z",
+    updated_at: "2026-07-18T07:30:38Z",
+    completed_at: "2026-07-18T07:30:38Z",
+    duration_seconds: 38.2,
+    error: null,
   },
   {
-    role: "assistant",
-    text: "Dựa trên báo cáo, tổng doanh thu thuần của mảng dịch vụ đám mây trong Quý 3 năm 2023 đạt 4.250 tỷ VNĐ. So với cùng kỳ năm 2022, mảng này ghi nhận mức tăng trưởng 37,1%.",
-    insufficientEvidence: false,
-    citationIds: ["P12-D7", "P14-D2"],
-    latencyMs: 420,
+    task_id: "preview-question-current",
+    task_type: "question_answer",
+    document_id: mockDocumentId,
+    display_name: "Mức tăng trưởng doanh thu đến từ đâu?",
+    status: "completed",
+    stage: "ready",
+    progress: 100,
+    cached: false,
+    created_at: "2026-07-18T07:34:00Z",
+    started_at: "2026-07-18T07:34:00Z",
+    updated_at: "2026-07-18T07:34:01Z",
+    completed_at: "2026-07-18T07:34:01Z",
+    duration_seconds: 0.42,
+    error: null,
+  },
+  {
+    task_id: "preview-upload-cached",
+    task_type: "document_processing",
+    document_id: "preview-policy-document",
+    display_name: "Kế hoạch chuyển đổi số cấp tỉnh 2026.pdf",
+    status: "completed",
+    stage: "ready",
+    progress: 100,
+    cached: true,
+    created_at: "2026-07-17T03:10:00Z",
+    started_at: "2026-07-17T03:10:00Z",
+    updated_at: "2026-07-17T03:10:00Z",
+    completed_at: "2026-07-17T03:10:00Z",
+    duration_seconds: 0,
+    error: null,
+  },
+  {
+    task_id: "preview-upload-failed",
+    task_type: "document_processing",
+    document_id: null,
+    display_name: "Phụ lục ngân sách bị khóa.pdf",
+    status: "failed",
+    stage: "failed",
+    progress: 100,
+    cached: false,
+    created_at: "2026-07-16T09:20:00Z",
+    started_at: "2026-07-16T09:20:00Z",
+    updated_at: "2026-07-16T09:20:02Z",
+    completed_at: "2026-07-16T09:20:02Z",
+    duration_seconds: 2.1,
+    error: { code: "ENCRYPTED_DOCUMENT", message: "Tài liệu có mật khẩu và không thể trích xuất." },
   },
 ];
 
 export default function Home() {
-  const [view, setView] = useState<ViewKey>("upload");
+  const [view, setView] = useState<AppView>("upload");
+  const [documentTab, setDocumentTab] = useState<DocumentTab>("overview");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [apiMode, setApiMode] = useState<ApiMode>("api");
   const [documentId, setDocumentId] = useState<string | null>(null);
-  const [documentStatus, setDocumentStatus] = useState<DocumentStatus>("queued");
-  const [status, setStatus] = useState<StatusResponse>(initialStatus);
+  const [documentStatus, setDocumentStatus] = useState<DocumentStatus | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
   const [report, setReport] = useState<ReportResponse | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [documentError, setDocumentError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
+  const [isCached, setIsCached] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const activeReport = report ?? mockReport;
-  const [selectedCitationId, setSelectedCitationId] = useState<string>("P14-D2");
+  const [selectedCitationId, setSelectedCitationId] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
   const [isCitationLoading, setIsCitationLoading] = useState(false);
-  const selectedCitation = activeReport.citations[selectedCitationId] ?? null;
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [citationError, setCitationError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [isAsking, setIsAsking] = useState(false);
+  const [qaError, setQaError] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  const [historyPage, setHistoryPage] = useState<TaskHistoryPage>(emptyHistory);
+  const [historyStatus, setHistoryStatus] = useState<DocumentStatus | "">("");
+  const [historyType, setHistoryType] = useState<TaskType | "">("");
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
+
+  const selectedCitation =
+    report && selectedCitationId ? report.citations[selectedCitationId] ?? null : null;
   const canAsk = documentStatus === "completed" && Boolean(report);
 
-  const activeTitle = useMemo(() => {
-    if (view === "upload") return "Tải tài liệu họp";
-    if (view === "processing") return stageLabel(status.stage);
-    if (view === "report") return "Tóm tắt điều hành";
-    return activeReport.file_name;
-  }, [activeReport.file_name, status.stage, view]);
+  function resetUpload() {
+    setView("upload");
+    setDocumentTab("overview");
+    setDocumentId(null);
+    setDocumentStatus(null);
+    setStatus(null);
+    setReport(null);
+    setSelectedFile(null);
+    setUploadError(null);
+    setDocumentError(null);
+    setIsUploading(false);
+    setIsPolling(false);
+    setIsCached(false);
+    setMessages([]);
+    setIsChatOpen(false);
+    setIsPreviewMode(false);
+    setIsMobileNavOpen(false);
+    closeCitation();
+    persistActiveDocument(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function enterPreviewMode() {
+    setIsPreviewMode(true);
+    setApiMode("mock");
+    setDocumentId(mockDocumentId);
+    setDocumentStatus("completed");
+    setStatus({
+      document_id: mockDocumentId,
+      status: "completed",
+      stage: "completed",
+      progress: 100,
+      elapsed_seconds: mockReport.processing_seconds,
+      error: null,
+    });
+    setReport(mockReport);
+    setSelectedFile(null);
+    setIsCached(false);
+    setDocumentError(null);
+    setMessages([
+      { role: "user", text: "Mức tăng trưởng doanh thu đến từ đâu?" },
+      {
+        role: "assistant",
+        text: "Tài liệu cho thấy tăng trưởng chủ yếu đến từ việc mở rộng khách hàng doanh nghiệp lớn và triển khai hai trung tâm dữ liệu mới.",
+        insufficientEvidence: false,
+        citationIds: ["P14-D2"],
+        latencyMs: 420,
+      },
+    ]);
+    setView("document");
+    setDocumentTab("overview");
+    setIsChatOpen(false);
+    setIsMobileNavOpen(false);
+    closeCitation();
+  }
+
+  function closeCitation() {
+    setSelectedCitationId(null);
+    setSelectedPage(null);
+    setCitationError(null);
+  }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
@@ -144,262 +262,666 @@ export default function Home() {
 
     setIsUploading(true);
     setUploadError(null);
-    setView("processing");
-
-    const upload = await uploadDocument(selectedFile);
-    setApiMode(upload.apiMode);
-    setDocumentId(upload.document_id);
-    setDocumentStatus(upload.status);
-    setStatus({
-      document_id: upload.document_id,
-      status: upload.status,
-      stage: upload.status === "queued" ? "queued" : "extracting",
-      progress: upload.status === "queued" ? 5 : 18,
-      elapsed_seconds: 0,
-      error: null,
-    });
-    setIsUploading(false);
-    setIsPolling(true);
-  }
-
-  function resetUpload() {
-    setView("upload");
-    setDocumentId(null);
-    setReport(null);
-    setDocumentStatus("queued");
-    setStatus(initialStatus);
-    setSelectedFile(null);
-    setUploadError(null);
-    setIsUploading(false);
-    setIsPolling(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setDocumentError(null);
+    setIsPreviewMode(false);
+    try {
+      const upload = await uploadDocument(selectedFile);
+      setApiMode(upload.apiMode);
+      setDocumentId(upload.document_id);
+      setIsCached(upload.cached);
+      persistActiveDocument(upload.document_id);
+      setDocumentStatus(upload.status);
+      const initialStage: ProcessingStage =
+        upload.status === "completed"
+          ? "completed"
+          : upload.status === "failed"
+            ? "failed"
+            : upload.status === "queued"
+              ? "queued"
+              : "parsing";
+      const initialProgress =
+        upload.status === "completed" || upload.status === "failed"
+          ? 100
+          : upload.status === "queued"
+            ? 0
+            : 10;
+      setStatus({
+        document_id: upload.document_id,
+        status: upload.status,
+        stage: initialStage,
+        progress: initialProgress,
+        elapsed_seconds: 0,
+        error: null,
+      });
+      setView("document");
+      setDocumentTab("overview");
+      setIsPolling(true);
+    } catch (error) {
+      setUploadError(errorMessage(error, "Không thể tải tài liệu. Vui lòng kiểm tra kết nối backend."));
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   async function handleSelectCitation(citationId: string) {
-    const citation = activeReport.citations[citationId];
+    if (!report) return;
+    const citation = report.citations[citationId];
     if (!citation) return;
 
     setSelectedCitationId(citationId);
+    setIsChatOpen(false);
+    setSelectedPage(null);
+    setCitationError(null);
     setIsCitationLoading(true);
-    const page = await getDocumentPage(activeReport.document_id, citation.page);
-    setApiMode(page.apiMode);
-    setSelectedPage(page);
-    setIsCitationLoading(false);
+    if (isPreviewMode) {
+      setSelectedPage({
+        document_id: report.document_id,
+        page_number: citation.page,
+        text: citation.excerpt,
+        blocks: [],
+      });
+      setIsCitationLoading(false);
+      return;
+    }
+    try {
+      const page = await getDocumentPage(report.document_id, citation.page);
+      setApiMode(page.apiMode);
+      setSelectedPage(page);
+    } catch (error) {
+      setCitationError(errorMessage(error, "Không tải được nội dung trang nguồn."));
+    } finally {
+      setIsCitationLoading(false);
+    }
   }
 
   async function handleAskQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = question.trim();
-    if (!trimmed || !canAsk || isAsking) return;
+    if (!trimmed || !canAsk || isAsking || !report) return;
 
     setQuestion("");
+    setQaError(null);
     setIsAsking(true);
     setMessages((current) => [...current, { role: "user", text: trimmed }]);
+    if (isPreviewMode) {
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: "Đây là câu trả lời minh họa cho bố cục Q&A. Khi dùng API thật, nội dung sẽ được tạo từ bằng chứng trong tài liệu.",
+          insufficientEvidence: false,
+          citationIds: ["P12-D7"],
+          latencyMs: 380,
+        },
+      ]);
+      setIsAsking(false);
+      return;
+    }
+    try {
+      const response = await askDocumentQuestion(report.document_id, trimmed);
+      setApiMode(response.apiMode);
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: response.answer,
+          insufficientEvidence: response.insufficient_evidence,
+          citationIds: response.citation_ids,
+          latencyMs: response.latency_ms,
+        },
+      ]);
+    } catch (error) {
+      setQaError(errorMessage(error, "Không thể gửi câu hỏi. Vui lòng thử lại."));
+    } finally {
+      setIsAsking(false);
+    }
+  }
 
-    const response: QuestionResponse & { apiMode: ApiMode } = await askDocumentQuestion(
-      activeReport.document_id,
-      trimmed,
-    );
-    setApiMode(response.apiMode);
-    setMessages((current) => [
-      ...current,
-      {
-        role: "assistant",
-        text: response.answer,
-        insufficientEvidence: response.insufficient_evidence,
-        citationIds: response.citation_ids,
-        latencyMs: response.latency_ms,
-      },
-    ]);
-    setIsAsking(false);
+  function useSuggestedQuestion(value: string) {
+    setQuestion(value);
+    setIsChatOpen(true);
+  }
+
+  async function openHistoryDocument(item: TaskHistoryItem) {
+    if (!item.document_id || item.status !== "completed") return;
+    setHistoryError(null);
+    setDocumentError(null);
+    if (isPreviewMode && item.document_id === mockDocumentId) {
+      setReport(mockReport);
+      setDocumentId(mockDocumentId);
+      setIsCached(false);
+      setDocumentStatus("completed");
+      setView("document");
+      setDocumentTab("overview");
+      setIsChatOpen(false);
+      return;
+    }
+    try {
+      const nextReport = await getDocumentReport(item.document_id);
+      setApiMode(nextReport.apiMode);
+      setDocumentId(item.document_id);
+      setIsCached(item.cached);
+      persistActiveDocument(item.document_id);
+      setDocumentStatus("completed");
+      setStatus({
+        document_id: item.document_id,
+        status: "completed",
+        stage: "completed",
+        progress: 100,
+        elapsed_seconds: item.duration_seconds ?? nextReport.processing_seconds,
+        error: null,
+      });
+      setReport(nextReport);
+      setDocumentTab("overview");
+      setView("document");
+      setMessages([]);
+      setIsChatOpen(false);
+      closeCitation();
+    } catch (error) {
+      setHistoryError(errorMessage(error, "Không thể mở lại báo cáo này."));
+    }
   }
 
   useEffect(() => {
-    if (!documentId || !isPolling) return;
+    const restoredDocumentId = readActiveDocument();
+    if (!restoredDocumentId) return;
+    const restoreTimer = window.setTimeout(() => {
+      setDocumentId(restoredDocumentId);
+      setDocumentStatus("queued");
+      setStatus({
+        document_id: restoredDocumentId,
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        elapsed_seconds: 0,
+        error: null,
+      });
+      setView("document");
+      setIsPolling(true);
+    }, 0);
+    return () => window.clearTimeout(restoreTimer);
+  }, []);
 
+  useEffect(() => {
+    if (!documentId || !isPolling) return;
     let cancelled = false;
     const currentDocumentId = documentId;
 
     async function tick() {
-      const nextStatus = await getDocumentStatus(currentDocumentId);
-      if (cancelled) return;
-
-      setApiMode(nextStatus.apiMode);
-      setStatus(nextStatus);
-      setDocumentStatus(nextStatus.status);
-
-      if (nextStatus.status === "completed") {
-        const nextReport = await getDocumentReport(currentDocumentId);
+      try {
+        const nextStatus = await getDocumentStatus(currentDocumentId);
         if (cancelled) return;
-        setApiMode(nextReport.apiMode);
-        setReport(nextReport);
-        setView("qa");
-        setIsPolling(false);
-        return;
-      }
+        setApiMode(nextStatus.apiMode);
+        setStatus(nextStatus);
+        setDocumentStatus(nextStatus.status);
 
-      if (nextStatus.status === "failed") {
+        if (nextStatus.status === "completed") {
+          const nextReport = await getDocumentReport(currentDocumentId);
+          if (cancelled) return;
+          setApiMode(nextReport.apiMode);
+          setReport(nextReport);
+          setDocumentTab("overview");
+          setIsPolling(false);
+        } else if (nextStatus.status === "failed") {
+          setIsPolling(false);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setDocumentError(errorMessage(error, "Mất kết nối khi theo dõi tiến độ xử lý."));
         setIsPolling(false);
       }
     }
 
-    tick();
-    const interval = window.setInterval(tick, 1800);
-
+    void tick();
+    const interval = window.setInterval(() => void tick(), 1800);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
   }, [documentId, isPolling]);
 
+  useEffect(() => {
+    if (view !== "history") return;
+    let cancelled = false;
+
+    async function loadHistory() {
+      setIsHistoryLoading(true);
+      setHistoryError(null);
+      if (isPreviewMode) {
+        const filteredItems = previewHistoryItems.filter(
+          (item) => (!historyStatus || item.status === historyStatus) && (!historyType || item.task_type === historyType),
+        );
+        setHistoryPage({
+          items: filteredItems.slice(historyOffset, historyOffset + 20),
+          total: filteredItems.length,
+          limit: 20,
+          offset: historyOffset,
+        });
+        setIsHistoryLoading(false);
+        return;
+      }
+      try {
+        const page = await getTaskHistory({
+          limit: 20,
+          offset: historyOffset,
+          status: historyStatus,
+          taskType: historyType,
+        });
+        if (cancelled) return;
+        setApiMode(page.apiMode);
+        setHistoryPage(page);
+      } catch (error) {
+        if (cancelled) return;
+        setHistoryError(errorMessage(error, "Không thể tải lịch sử tác vụ."));
+      } finally {
+        if (!cancelled) setIsHistoryLoading(false);
+      }
+    }
+
+    void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [historyOffset, historyReloadKey, historyStatus, historyType, isPreviewMode, view]);
+
   return (
-    <main className="min-h-screen bg-[#fafaf4] text-[#1a1c19]">
-      <div className="grid min-h-screen lg:grid-cols-[280px_minmax(0,1fr)_360px]">
-        <SideNav activeView={view} onChange={setView} onNewDocument={resetUpload} />
-        <section className="flex min-h-screen flex-col border-r border-[#c4c7c7]/70">
-          <TopBar
-            title={activeTitle}
-            apiMode={apiMode}
-            pageCount={activeReport.page_count}
-            status={documentStatus}
-          />
-          <div className="flex-1 overflow-auto px-4 py-6 sm:px-6">
-            {view === "upload" && (
-              <UploadWorkspace
-                fileInputRef={fileInputRef}
-                selectedFile={selectedFile}
-                uploadError={uploadError}
-                isUploading={isUploading}
-                onFileChange={handleFileChange}
-                onSubmit={handleUpload}
-              />
-            )}
-            {view === "processing" && (
-              <ProcessingWorkspace status={status} apiMode={apiMode} onRetry={resetUpload} />
-            )}
-            {view === "report" && (
-              <ReportWorkspace report={activeReport} onSelectCitation={handleSelectCitation} />
-            )}
-            {view === "qa" && (
-              <QaWorkspace
-                report={activeReport}
-                messages={messages}
-                question={question}
-                canAsk={canAsk}
-                isAsking={isAsking}
-                onQuestionChange={setQuestion}
-                onSubmit={handleAskQuestion}
-                onSelectCitation={handleSelectCitation}
-              />
-            )}
-            <div className="mt-6 lg:hidden">
-              <CitationViewer
-                report={activeReport}
-                citationId={selectedCitationId}
-                citation={selectedCitation}
-                page={selectedPage}
-                isLoading={isCitationLoading}
-              />
-            </div>
+    <main className="flex min-h-screen bg-[#fafaf4] text-[#1a1c19]">
+      {isMobileNavOpen && (
+        <button
+          type="button"
+          aria-label="Đóng điều hướng"
+          className="fixed inset-0 z-40 bg-black/35 lg:hidden"
+          onClick={() => setIsMobileNavOpen(false)}
+        />
+      )}
+      <AppSidebar
+        view={view}
+        hasDocument={Boolean(documentId)}
+        documentName={report?.file_name ?? selectedFile?.name ?? null}
+        collapsed={isSidebarCollapsed}
+        mobileOpen={isMobileNavOpen}
+        onToggleCollapsed={() => setIsSidebarCollapsed((value) => !value)}
+        onCloseMobile={() => setIsMobileNavOpen(false)}
+        onUpload={resetUpload}
+        onResults={() => {
+          setView("document");
+          setDocumentTab("overview");
+          setIsChatOpen(false);
+          setIsMobileNavOpen(false);
+        }}
+        onHistory={() => {
+          setView("history");
+          setIsChatOpen(false);
+          setIsMobileNavOpen(false);
+        }}
+      />
+
+      <section
+        className={cn(
+          "min-w-0 flex-1 transition-[padding] duration-200",
+          view === "document" && report && documentStatus === "completed" && isChatOpen && "2xl:pr-[430px]",
+        )}
+      >
+        <MobileWorkspaceHeader view={view} onOpenMenu={() => setIsMobileNavOpen(true)} />
+        {apiMode === "mock" && (
+          <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-xs text-amber-900">
+            Đang dùng dữ liệu xem trước hoặc fallback có kiểm soát.
           </div>
-        </section>
-        <aside className="hidden min-h-screen bg-[#fafaf7] lg:block">
-          <CitationViewer
-            report={activeReport}
-            citationId={selectedCitationId}
-            citation={selectedCitation}
-            page={selectedPage}
-            isLoading={isCitationLoading}
-          />
-        </aside>
-      </div>
+        )}
+
+        {view === "upload" && (
+          <PageContainer>
+            <UploadWorkspace
+              fileInputRef={fileInputRef}
+              selectedFile={selectedFile}
+              uploadError={uploadError}
+              isUploading={isUploading}
+              onFileChange={handleFileChange}
+              onSubmit={handleUpload}
+              onPreview={enterPreviewMode}
+            />
+          </PageContainer>
+        )}
+
+        {view === "document" && (
+          <>
+            {report && documentStatus === "completed" ? (
+              <>
+                <DocumentHeader report={report} selectedFile={selectedFile} status={status} cached={isCached} />
+                <PageContainer className="pb-0 pt-5">
+                  <ResultTabs activeTab={documentTab} report={report} onChange={setDocumentTab} />
+                </PageContainer>
+                <PageContainer className="py-7">
+                  {documentTab === "overview" && (
+                    <OverviewTab report={report} onSelectCitation={handleSelectCitation} />
+                  )}
+                  {documentTab === "terms" && (
+                    <TermsTab report={report} onSelectCitation={handleSelectCitation} />
+                  )}
+                  {documentTab === "questions" && (
+                    <QuestionsTab
+                      report={report}
+                      onSelectCitation={handleSelectCitation}
+                      onUseQuestion={useSuggestedQuestion}
+                    />
+                  )}
+                  {documentTab === "related" && (
+                    <RelatedTab report={report} onSelectCitation={handleSelectCitation} />
+                  )}
+                </PageContainer>
+              </>
+            ) : (
+              <PageContainer className="py-10 lg:mx-0 lg:max-w-[970px] lg:px-[90px] lg:py-12">
+                <ProcessingDocumentHeader selectedFile={selectedFile} />
+                <ProcessingWorkspace
+                  status={status}
+                  error={documentError}
+                  onRetry={() => setIsPolling(true)}
+                  onNewDocument={resetUpload}
+                />
+              </PageContainer>
+            )}
+          </>
+        )}
+
+        {view === "history" && (
+          <PageContainer className="py-8">
+            <HistoryWorkspace
+              page={historyPage}
+              statusFilter={historyStatus}
+              typeFilter={historyType}
+              isLoading={isHistoryLoading}
+              error={historyError}
+              onStatusFilter={(value) => {
+                setHistoryStatus(value);
+                setHistoryOffset(0);
+              }}
+              onTypeFilter={(value) => {
+                setHistoryType(value);
+                setHistoryOffset(0);
+              }}
+              onRetry={() => setHistoryReloadKey((value) => value + 1)}
+              onOpenDocument={openHistoryDocument}
+              onPrevious={() => setHistoryOffset((value) => Math.max(0, value - 20))}
+              onNext={() => setHistoryOffset((value) => value + 20)}
+            />
+          </PageContainer>
+        )}
+      </section>
+
+      {view === "document" && report && documentStatus === "completed" && (
+        <ChatPopup
+          open={isChatOpen}
+          report={report}
+          messages={messages}
+          question={question}
+          canAsk={canAsk}
+          isAsking={isAsking}
+          error={qaError}
+          onOpen={() => setIsChatOpen(true)}
+          onClose={() => setIsChatOpen(false)}
+          onQuestionChange={setQuestion}
+          onSubmit={handleAskQuestion}
+          onSelectCitation={handleSelectCitation}
+        />
+      )}
+
+      {report && selectedCitationId && (
+        <CitationDrawer
+          report={report}
+          citationId={selectedCitationId}
+          citation={selectedCitation}
+          page={selectedPage}
+          isLoading={isCitationLoading}
+          error={citationError}
+          onClose={closeCitation}
+        />
+      )}
     </main>
   );
 }
 
-function SideNav({
-  activeView,
-  onChange,
-  onNewDocument,
+function AppSidebar({
+  view,
+  hasDocument,
+  documentName,
+  collapsed,
+  mobileOpen,
+  onToggleCollapsed,
+  onCloseMobile,
+  onUpload,
+  onResults,
+  onHistory,
 }: {
-  activeView: ViewKey;
-  onChange: (view: ViewKey) => void;
-  onNewDocument: () => void;
+  view: AppView;
+  hasDocument: boolean;
+  documentName: string | null;
+  collapsed: boolean;
+  mobileOpen: boolean;
+  onToggleCollapsed: () => void;
+  onCloseMobile: () => void;
+  onUpload: () => void;
+  onResults: () => void;
+  onHistory: () => void;
 }) {
   return (
-    <aside className="border-r border-[#c4c7c7] bg-[#eeeee9] px-4 py-5 lg:min-h-screen">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold tracking-tight">Antipaper</h1>
-        <p className="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">
-          Executive Intelligence
-        </p>
-      </div>
-      <Button
-        type="button"
-        className="mb-8 h-10 w-full rounded-lg bg-black text-white hover:bg-black/85"
-        onClick={onNewDocument}
-      >
-        <Plus className="size-4" />
-        New Document
-      </Button>
-      <nav className="space-y-1">
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => onChange(item.key)}
-            className={cn(
-              "flex h-12 w-full items-center gap-3 rounded-lg px-4 text-left text-[#444748] transition",
-              activeView === item.key && "bg-[#c4c7c7]/30 font-bold text-black",
-            )}
-          >
-            <item.icon className="size-5" />
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </nav>
-      <div className="mt-10 space-y-1 lg:fixed lg:bottom-5 lg:w-[248px]">
-        <button className="flex h-10 w-full items-center gap-3 rounded-lg px-4 text-[#444748]">
-          <Settings className="size-5" />
-          <span>Settings</span>
+    <aside
+      className={cn(
+        "fixed inset-y-0 left-0 z-50 flex w-[280px] shrink-0 -translate-x-full flex-col border-r border-[#c4c7c7]/60 bg-[#eeeee9] px-3 py-4 shadow-xl transition-[width,transform] duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:shadow-none",
+        mobileOpen && "translate-x-0",
+        collapsed ? "lg:w-[76px]" : "lg:w-[280px]",
+      )}
+    >
+      <div className="flex h-14 items-center justify-between px-3">
+        <button type="button" onClick={onUpload} className="min-w-0 text-left" aria-label="Về màn hình tải lên">
+          <span className={cn("block font-bold tracking-[-0.02em]", collapsed ? "lg:text-xl" : "text-2xl")}>{collapsed ? <span className="hidden lg:inline">A</span> : null}<span className={cn(collapsed && "lg:hidden")}>Antipaper</span></span>
         </button>
-        <button className="flex h-10 w-full items-center gap-3 rounded-lg px-4 text-[#444748]">
-          <CircleHelp className="size-5" />
-          <span>Help</span>
+        <Button type="button" variant="ghost" size="icon" className="lg:hidden" onClick={onCloseMobile} aria-label="Đóng menu"><X className="size-5" /></Button>
+      </div>
+
+      <nav aria-label="Điều hướng chính" className="mt-8 space-y-2">
+        <SidebarItem active={view === "upload"} collapsed={collapsed} icon={FileUp} label="Tải lên" onClick={onUpload} />
+        <SidebarItem active={view === "document"} collapsed={collapsed} icon={LayoutDashboard} label="Kết quả" onClick={onResults} disabled={!hasDocument} />
+        <SidebarItem active={view === "history"} collapsed={collapsed} icon={HistoryIcon} label="Lịch sử" onClick={onHistory} />
+      </nav>
+
+      <div className="mt-auto">
+        {documentName && (
+          <button type="button" onClick={onResults} title={documentName} className={cn("mb-3 w-full rounded-lg border border-[#c4c7c7]/70 bg-white/70 p-3 text-left", collapsed && "lg:flex lg:justify-center lg:p-2")}>
+            <FileText className="size-4 shrink-0" />
+            <span className={cn("mt-2 block truncate text-xs text-[#555952]", collapsed && "lg:hidden")}>{documentName}</span>
+          </button>
+        )}
+        <button type="button" onClick={onToggleCollapsed} className="hidden w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm text-[#555952] hover:bg-white/60 lg:flex" aria-label={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}>
+          {collapsed ? <PanelLeftOpen className="size-4" /> : <><PanelLeftClose className="size-4" /><span>Thu gọn</span></>}
         </button>
       </div>
     </aside>
   );
 }
 
-function TopBar({
-  title,
-  apiMode,
-  pageCount,
-  status,
+function SidebarItem({
+  active,
+  icon: Icon,
+  label,
+  collapsed,
+  disabled,
+  onClick,
 }: {
-  title: string;
-  apiMode: ApiMode;
-  pageCount: number;
-  status: DocumentStatus;
+  active: boolean;
+  icon: typeof FileUp;
+  label: string;
+  collapsed: boolean;
+  disabled?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-10 flex min-h-18 items-center justify-between border-b border-[#c4c7c7]/70 bg-[#fafaf4]/90 px-4 py-3 backdrop-blur sm:px-6">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex size-9 items-center justify-center rounded bg-[#eeeee9]">
-          <FileText className="size-5" />
-        </div>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      title={disabled ? "Hãy tải tài liệu trước" : collapsed ? label : undefined}
+      className={cn(
+        "flex h-12 w-full items-center gap-3 rounded-lg px-4 text-sm font-medium text-[#444748] transition hover:bg-[#c4c7c7]/20 focus-visible:outline-2 focus-visible:outline-offset-2",
+        active && "bg-[#c4c7c7]/30 font-bold text-black hover:bg-[#c4c7c7]/30",
+        collapsed && "lg:justify-center lg:px-0",
+        disabled && "cursor-not-allowed opacity-40",
+      )}
+    >
+      <Icon className="size-5 shrink-0" />
+      <span className={cn(collapsed && "lg:hidden")}>{label}</span>
+    </button>
+  );
+}
+
+function MobileWorkspaceHeader({ view, onOpenMenu }: { view: AppView; onOpenMenu: () => void }) {
+  const title = view === "upload" ? "Tải lên" : view === "document" ? "Kết quả" : "Lịch sử";
+  return (
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-[#d4d5cf] bg-[#fbfbf7]/95 px-4 backdrop-blur lg:hidden">
+      <Button type="button" variant="ghost" size="icon" onClick={onOpenMenu} aria-label="Mở điều hướng"><Menu className="size-5" /></Button>
+      <span className="font-semibold">{title}</span>
+    </header>
+  );
+}
+
+function PageContainer({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("mx-auto w-full max-w-[1180px] px-4 py-10 sm:px-6", className)}>{children}</div>;
+}
+
+function DocumentHeader({
+  report,
+  selectedFile,
+  status,
+  cached,
+}: {
+  report: ReportResponse | null;
+  selectedFile: File | null;
+  status: StatusResponse | null;
+  cached: boolean;
+}) {
+  const title = report?.file_name ?? selectedFile?.name ?? "Tài liệu đang xử lý";
+  return (
+    <section className="border-b border-[#d4d5cf] bg-white">
+      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-4 py-6 sm:px-6 md:flex-row md:items-end md:justify-between">
         <div className="min-w-0">
-          <h2 className="truncate text-xl font-medium tracking-tight sm:text-2xl">{title}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-[#444748]">
-            <span className="size-1.5 rounded-full bg-[#566340]" />
-            <span>{status === "completed" ? `Đã phân tích ${pageCount} trang` : "Đang xử lý"}</span>
-            {apiMode === "mock" && <Badge variant="outline">Demo fallback</Badge>}
+          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#62655f]">Tài liệu hiện tại</p>
+          <h1 title={title} className="mt-2 truncate text-2xl font-semibold tracking-tight sm:text-3xl">
+            {title}
+          </h1>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-[#62655f]">
+            <StatusBadge status={status?.status ?? "queued"} />
+            {cached && <Badge variant="outline">Cache hit</Badge>}
+            {report && <span>{report.page_count} trang</span>}
+            {status && <span>{status.elapsed_seconds.toFixed(1)} giây</span>}
+            {report?.generation_mode === "llm" && <Badge variant="outline">Báo cáo AI có kiểm tra nguồn</Badge>}
+            {report?.generation_mode === "heuristic_fallback" && (
+              <Badge variant="outline" className="border-amber-500 text-amber-800">Kết quả dự phòng; cần kiểm tra kỹ</Badge>
+            )}
           </div>
         </div>
+        {report && (
+          <div className="grid grid-cols-3 gap-5 text-right text-sm">
+            <Metric value={report.terms.length} label="Thuật ngữ" />
+            <Metric value={report.suggested_questions.length} label="Câu hỏi" />
+            <Metric value={Object.keys(report.citations).length} label="Nguồn" />
+          </div>
+        )}
       </div>
-      <LoaderCircle className="size-5 text-[#444748]" />
+    </section>
+  );
+}
+
+function ProcessingDocumentHeader({ selectedFile }: { selectedFile: File | null }) {
+  return (
+    <header>
+      <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#8a8c86]">Đang xử lý</p>
+      <h1 className="mt-4 text-3xl font-semibold tracking-[-0.035em] text-[#0e2025] sm:text-[40px] sm:leading-none">
+        Phân tích tài liệu
+      </h1>
+      <p className="mt-4 truncate text-base text-[#465257] sm:text-lg" title={selectedFile?.name}>
+        {selectedFile?.name ?? "Tài liệu đang xử lý"}
+      </p>
     </header>
+  );
+}
+
+function Metric({ value, label }: { value: number; label: string }) {
+  return (
+    <div>
+      <strong className="block text-xl text-[#1a1c19]">{value}</strong>
+      <span className="text-xs text-[#62655f]">{label}</span>
+    </div>
+  );
+}
+
+function ResultTabs({
+  activeTab,
+  report,
+  onChange,
+}: {
+  activeTab: DocumentTab;
+  report: ReportResponse;
+  onChange: (tab: DocumentTab) => void;
+}) {
+  const tabs: Array<{ key: DocumentTab; label: string; description: string; icon: typeof LayoutDashboard; count: number }> = [
+    {
+      key: "overview",
+      label: "Tổng quan",
+      description: "Điểm quyết định và tác động",
+      icon: LayoutDashboard,
+      count: Object.values(report.summary).flat().length,
+    },
+    {
+      key: "terms",
+      label: "Thuật ngữ",
+      description: "Điều khoản cần làm rõ",
+      icon: Tags,
+      count: report.terms.length,
+    },
+    {
+      key: "questions",
+      label: "Câu hỏi phản biện",
+      description: "Câu hỏi dùng trong cuộc họp",
+      icon: MessagesSquare,
+      count: report.suggested_questions.length,
+    },
+    {
+      key: "related",
+      label: "Văn bản liên quan",
+      description: "Căn cứ được tài liệu nhắc đến",
+      icon: LibraryBig,
+      count: report.related_documents.length,
+    },
+  ];
+
+  return (
+    <div role="tablist" aria-label="Các nhóm kết quả" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === tab.key}
+          onClick={() => onChange(tab.key)}
+          className={cn(
+            "flex min-h-24 items-start gap-3 rounded-lg border border-[#d8d5cb] bg-white p-4 text-left transition hover:border-[#747878] hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2",
+            activeTab === tab.key && "border-black bg-white shadow-sm",
+          )}
+        >
+          <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#f4f4ee]", activeTab === tab.key && "bg-[#e3e3dd]")}>
+            <tab.icon className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-2 font-semibold">
+              <span>{tab.label}</span>
+              <span className="rounded-full bg-[#e3e3dd] px-2 py-0.5 font-mono text-[10px]">{tab.count}</span>
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-[#6b6f68]">{tab.description}</span>
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -410,6 +932,7 @@ function UploadWorkspace({
   isUploading,
   onFileChange,
   onSubmit,
+  onPreview,
 }: {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   selectedFile: File | null;
@@ -417,15 +940,12 @@ function UploadWorkspace({
   isUploading: boolean;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onPreview: () => void;
 }) {
   return (
-    <form onSubmit={onSubmit} className="grid gap-6 xl:grid-cols-[minmax(0,500px)_380px]">
-      <section>
-        <div className="mb-6">
-          <h2 className="text-2xl font-medium tracking-tight">Tải tài liệu họp</h2>
-          <p className="mt-2 text-[#444748]">Hỗ trợ PDF, DOCX. Tối đa 25MB mỗi tệp.</p>
-        </div>
-        <label className="flex min-h-[400px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#c4c7c7] bg-white p-8 text-center shadow-sm">
+    <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+      <form onSubmit={onSubmit}>
+        <label className="mt-8 flex min-h-[300px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#b9bcb4] bg-white p-8 text-center shadow-sm transition hover:border-[#566340] hover:bg-[#fafcf6]">
           <input
             ref={fileInputRef}
             type="file"
@@ -433,46 +953,47 @@ function UploadWorkspace({
             className="sr-only"
             onChange={onFileChange}
           />
-          <span className="mb-6 flex size-20 items-center justify-center rounded-full bg-[#eeeee9]">
-            <FileUp className="size-9" />
+          <span className="mb-5 flex size-16 items-center justify-center rounded-full bg-[#e2e8d6]">
+            <FileUp className="size-7" />
           </span>
-          <span className="text-lg font-medium">
+          <span className="max-w-full truncate text-lg font-medium">
             {selectedFile ? selectedFile.name : "Kéo thả tài liệu hoặc chọn từ máy"}
           </span>
-          <span className="mt-3 text-sm text-[#444748]">PDF/DOCX, tối đa 25MB</span>
+          <span className="mt-2 text-sm text-[#62655f]">PDF/DOCX, tối đa 25 MB</span>
         </label>
-        {uploadError && (
-          <p className="mt-4 flex items-center gap-2 text-sm text-red-700">
-            <AlertTriangle className="size-4" />
-            {uploadError}
-          </p>
-        )}
-        <Button
-          type="submit"
-          disabled={isUploading}
-          className="mt-6 h-10 rounded-lg bg-black px-6 text-white hover:bg-black/85"
-        >
-          {isUploading ? "Đang tải..." : "Bắt đầu phân tích"}
-        </Button>
-      </section>
-      <aside className="rounded-lg border border-[#c4c7c7] bg-white p-6">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">Mục tiêu phân tích</p>
-        <div className="mt-6 space-y-5">
-          <UploadGoal title="Tóm tắt điều hành" description="Rút ra bối cảnh, nội dung chính, quyết định và tác động." />
-          <UploadGoal title="Hỏi đáp có nguồn" description="Mỗi câu trả lời cần citation để kiểm chứng nhanh." />
+        {uploadError && <InlineError className="mt-4" message={uploadError} />}
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Button type="submit" disabled={isUploading} className="h-11 bg-[#1a1c19] px-5 text-white">
+            {isUploading ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
+            {isUploading ? "Đang tải tài liệu" : "Bắt đầu phân tích"}
+          </Button>
+          <Button type="button" variant="outline" className="h-11 bg-white px-5" onClick={onPreview}>
+            <Eye className="size-4" /> Xem trước toàn bộ kết quả
+          </Button>
+        </div>
+      </form>
+      <aside className="rounded-xl border border-[#d4d5cf] bg-white p-6">
+        <h2 className="font-semibold">Bạn sẽ nhận được</h2>
+        <div className="mt-5 space-y-5">
+          <UploadGoal title="Báo cáo điều hành" description="Bối cảnh, nội dung chính, điểm cần quyết định và tác động." />
+          <UploadGoal title="Câu hỏi phản biện" description="Các câu hỏi cần đặt trong cuộc họp, kèm lý do và căn cứ." />
+          <UploadGoal title="Kiểm chứng một thao tác" description="Mỗi nhận định quan trọng mở đúng trang và đoạn nguồn." />
+        </div>
+        <div className="mt-6 border-t border-[#e3e4de] pt-5 text-xs leading-5 text-[#62655f]">
+          Chỉ tải tài liệu công khai hoặc đã được phê duyệt cho môi trường demo.
         </div>
       </aside>
-    </form>
+    </div>
   );
 }
 
 function UploadGoal({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex gap-3">
-      <CheckCircle2 className="mt-1 size-5 text-[#566340]" />
+      <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-[#566340]" />
       <div>
-        <h3 className="font-medium">{title}</h3>
-        <p className="mt-1 text-sm leading-6 text-[#444748]">{description}</p>
+        <h3 className="text-sm font-medium">{title}</h3>
+        <p className="mt-1 text-sm leading-6 text-[#62655f]">{description}</p>
       </div>
     </div>
   );
@@ -480,332 +1001,597 @@ function UploadGoal({ title, description }: { title: string; description: string
 
 function ProcessingWorkspace({
   status,
-  apiMode,
+  error,
   onRetry,
+  onNewDocument,
 }: {
-  status: StatusResponse;
-  apiMode: ApiMode;
+  status: StatusResponse | null;
+  error: string | null;
   onRetry: () => void;
+  onNewDocument: () => void;
 }) {
-  const steps: ProcessingStage[] = ["extracting", "detecting_tables", "stitching", "summarizing"];
+  if (!status) {
+    return <EmptyState title="Chưa có tác vụ xử lý" description="Hãy tải một tài liệu để bắt đầu." actionLabel="Tải tài liệu" onAction={onNewDocument} />;
+  }
+
+  const failed = status.status === "failed";
+  const progress = Math.min(100, Math.max(0, Math.round(status.progress)));
+  const currentStepIndex = processingStepIndex(status);
+  const currentStep = processingSteps[currentStepIndex];
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-      <section className="flex min-h-[560px] flex-col items-center justify-center rounded-lg bg-[#fafaf4] p-8 text-center">
-        <div className="relative flex size-48 items-center justify-center rounded-full border-8 border-[#d3e3b7] bg-white">
-          <span className="text-4xl font-semibold">{status.progress}%</span>
-        </div>
-        <h2 className="mt-8 text-2xl font-medium">{stageLabel(status.stage)}</h2>
-        <p className="mt-3 max-w-md text-[#444748]">
-          {status.status === "failed"
-            ? status.error?.message ?? "Quá trình xử lý thất bại."
-            : "Đang trích xuất, nhận diện bảng và tạo intelligence report."}
-        </p>
-        <div className="mt-6 flex items-center gap-3 font-mono text-xs text-[#444748]">
-          <Clock3 className="size-4" />
-          <span>{status.elapsed_seconds.toFixed(1)}s</span>
-          {apiMode === "mock" && <Badge variant="outline">Demo fallback</Badge>}
-        </div>
-        {status.status === "failed" && (
-          <Button type="button" variant="outline" className="mt-6 rounded-lg" onClick={onRetry}>
-            <RefreshCcw className="size-4" />
-            Thử lại
-          </Button>
-        )}
-      </section>
-      <aside className="rounded-lg border border-[#c4c7c7] bg-white p-6">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">Pipeline status</p>
-        <div className="mt-6 space-y-4">
-          {steps.map((step) => (
-            <div key={step} className="flex items-center gap-3">
+    <section
+      aria-live="polite"
+      aria-busy={!failed && status.status !== "completed"}
+      className="mt-9 rounded-xl border border-[#deddd5] bg-white p-6 shadow-[0_3px_14px_rgba(28,37,34,0.08)] sm:p-8"
+    >
+      <div className="flex items-center justify-between gap-5">
+        <h2 className={cn("text-lg font-semibold text-[#102025]", failed && "text-red-800")}>
+          {failed ? "Không thể xử lý tài liệu" : currentStep.label}
+        </h2>
+        <span className="shrink-0 font-mono text-base text-[#455257]">{progress}%</span>
+      </div>
+
+      <div
+        role="progressbar"
+        aria-label="Tiến độ phân tích tài liệu"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+        className="mt-4 h-2.5 overflow-hidden rounded-full bg-[#dfdfd8]"
+      >
+        <div
+          className={cn("h-full rounded-full bg-[#17624f] transition-[width] duration-500 ease-out", failed && "bg-red-700")}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-xs text-[#455257]">
+        <span>
+          Trạng thái: <strong className="font-bold text-[#263236]">{status.status}</strong>
+        </span>
+        <span>Đã trôi qua: {status.elapsed_seconds.toFixed(1)}s</span>
+      </div>
+
+      <ol className="mt-10 space-y-6" aria-label="Các bước phân tích tài liệu">
+        {processingSteps.map((step, index) => {
+          const completed = !failed && (status.status === "completed" || index < currentStepIndex);
+          const active = !failed && status.status !== "completed" && index === currentStepIndex;
+          return (
+            <li key={step.id} className="flex min-h-7 items-center gap-4">
               <span
                 className={cn(
-                  "size-3 rounded-full border border-[#c4c7c7]",
-                  status.progress >= stepProgress(step) && "border-[#566340] bg-[#566340]",
+                  "relative flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-[#d5d3c9] bg-white text-white",
+                  completed && "border-[#17624f] bg-[#17624f]",
+                  active && "border-[#17624f] shadow-[0_0_0_3px_rgba(23,98,79,0.12)]",
+                  failed && index === currentStepIndex && "border-red-700",
                 )}
-              />
-              <span className="text-sm">{stageLabel(step)}</span>
-            </div>
-          ))}
-        </div>
-      </aside>
-    </div>
-  );
-}
+                aria-hidden="true"
+              >
+                {completed && <CheckCircle2 className="size-4" strokeWidth={3} />}
+                {active && <span className="size-2.5 rounded-full bg-[#17624f]" />}
+                {failed && index === currentStepIndex && <X className="size-4 text-red-700" strokeWidth={3} />}
+              </span>
+              <span
+                className={cn(
+                  "text-base text-[#969a97] sm:text-lg",
+                  (completed || active) && "text-[#263236]",
+                  active && "font-semibold text-[#102025]",
+                  failed && index === currentStepIndex && "font-semibold text-red-800",
+                )}
+              >
+                {step.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
 
-function stepProgress(stage: ProcessingStage) {
-  const progress: Record<ProcessingStage, number> = {
-    queued: 0,
-    extracting: 15,
-    detecting_tables: 35,
-    stitching: 55,
-    summarizing: 75,
-    completed: 100,
-    failed: 100,
-  };
-  return progress[stage];
-}
-
-function ReportWorkspace({
-  report,
-  onSelectCitation,
-}: {
-  report: ReportResponse;
-  onSelectCitation: (citationId: string) => void;
-}) {
-  const sections = [
-    ["Bối cảnh", report.summary.context],
-    ["Nội dung chính", report.summary.main_content],
-    ["Điểm cần quyết định", report.summary.decision_points],
-    ["Tác động", report.summary.impact],
-  ] as const;
-
-  return (
-    <div className="space-y-6">
-      <section className="grid gap-4 xl:grid-cols-2">
-        {sections.map(([title, items]) => (
-          <div key={title} className="rounded-lg border border-[#c4c7c7] bg-white p-5">
-            <h3 className="font-medium">{title}</h3>
-            <div className="mt-4 space-y-4">
-              {items.map((item) => (
-                <CitedParagraph key={item.text} item={item} report={report} onSelectCitation={onSelectCitation} />
-              ))}
-            </div>
+      {(failed || error) && (
+        <div className="mt-8 border-t border-[#e4e3dc] pt-5">
+          <InlineError message={error ?? status.error?.message ?? "Quá trình xử lý đã thất bại."} />
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={onRetry}>
+              <RefreshCcw className="size-4" /> Theo dõi lại
+            </Button>
+            <Button type="button" onClick={onNewDocument}>Tải tài liệu khác</Button>
           </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const processingSteps = [
+  { id: "queued", label: "Đưa vào hàng đợi" },
+  { id: "extracting", label: "Bóc tách văn bản & metadata" },
+  { id: "indexing", label: "Lập chỉ mục theo trang/điều" },
+  { id: "reporting", label: "Tổng hợp & sinh báo cáo" },
+  { id: "completed", label: "Hoàn tất" },
+] as const;
+
+function processingStepIndex(status: StatusResponse) {
+  const stageSteps: Partial<Record<ProcessingStage, number>> = {
+    queued: 0,
+    parsing: 1,
+    extracting: 1,
+    detecting_tables: 1,
+    stitching: 2,
+    generating: 3,
+    summarizing: 3,
+    ready: 4,
+    completed: 4,
+    failed: 3,
+  };
+  const mappedStep = stageSteps[status.stage];
+  if (mappedStep !== undefined) return mappedStep;
+  if (status.progress >= 100) return 4;
+  if (status.progress >= 60) return 3;
+  if (status.progress >= 35) return 2;
+  if (status.progress >= 10) return 1;
+  return 0;
+}
+
+function OverviewTab({ report, onSelectCitation }: ReportTabProps) {
+  const sections = [
+    ["Điểm cần quyết định", "Các nội dung cần chủ trì kết luận hoặc lựa chọn phương án.", report.summary.decision_points],
+    ["Bối cảnh", "Phạm vi và lý do tài liệu được trình tại cuộc họp.", report.summary.context],
+    ["Nội dung chính", "Những luận điểm và số liệu cốt lõi cần nắm.", report.summary.main_content],
+    ["Tác động", "Hệ quả, trách nhiệm hoặc rủi ro cần lưu ý.", report.summary.impact],
+  ] as const;
+  return (
+    <div className="mx-auto max-w-[900px]">
+      <article className="mt-7 space-y-8 rounded-lg border border-[#d8d5cb] bg-white p-6 shadow-sm md:p-8">
+        {sections.map(([title, description, items], index) => (
+          <section key={title} className={cn(index === 0 && "rounded-lg border border-[#e3e3dd] bg-[#f4f4ee] p-5")}>
+            <h2 className="font-mono text-base font-bold uppercase leading-6 tracking-[0.12em] text-[#444748]">{title}</h2>
+            <p className="mt-2 text-sm text-[#62655f]">{description}</p>
+            <div className="mt-5 space-y-5">
+              {items.length ? items.map((item) => <CitedParagraph key={item.text} item={item} report={report} onSelectCitation={onSelectCitation} />) : <p className="text-sm text-[#777a74]">Chưa có nội dung trong mục này.</p>}
+            </div>
+          </section>
         ))}
-      </section>
-      <section className="rounded-lg border border-[#c4c7c7] bg-white p-5">
-        <h3 className="font-medium">Thuật ngữ</h3>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {report.terms.map((term) => (
-            <div key={term.term} className="rounded-lg border border-[#c4c7c7]/70 p-4">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge>{term.term}</Badge>
-                {term.citation_ids.map((id) => (
-                  <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
-                ))}
-              </div>
-              <p className="text-sm leading-6 text-[#444748]">{term.explanation}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="rounded-lg border border-[#c4c7c7] bg-white p-5">
-        <h3 className="font-medium">Câu hỏi gợi ý</h3>
-        <div className="mt-4 space-y-3">
-          {report.suggested_questions.map((question) => (
-            <div key={question.question} className="rounded-lg border border-[#c4c7c7]/70 p-4">
-              <p className="font-medium">{question.question}</p>
-              <p className="mt-2 text-sm leading-6 text-[#444748]">{question.rationale}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {question.citation_ids.map((id) => (
-                  <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      </article>
     </div>
   );
 }
 
-function CitedParagraph({
-  item,
-  report,
-  onSelectCitation,
-}: {
-  item: { text: string; citation_ids: string[] };
-  report: ReportResponse;
-  onSelectCitation: (citationId: string) => void;
-}) {
+type ReportTabProps = { report: ReportResponse; onSelectCitation: (citationId: string) => void };
+
+function TermsTab({ report, onSelectCitation }: ReportTabProps) {
   return (
-    <div>
-      <p className="text-sm leading-6 text-[#1a1c19]">{item.text}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {item.citation_ids.map((id) => (
-          <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+    <div className="mx-auto max-w-[900px]">
+      {report.terms.length < 10 && <InlineNotice className="mt-5" message={`Báo cáo hiện có ${report.terms.length}/10 thuật ngữ theo ngưỡng mục tiêu.`} />}
+      <div className="mt-7 grid gap-4 md:grid-cols-2">
+        {report.terms.map((term) => (
+          <article key={term.term} className="rounded-lg border border-[#d8d5cb] bg-white p-6 transition-shadow hover:shadow-sm">
+            <h2 className="font-semibold">{term.term}</h2>
+            <p className="mt-3 text-sm leading-7 text-[#555952]">{term.explanation}</p>
+            <CitationList ids={term.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+          </article>
         ))}
       </div>
     </div>
   );
 }
 
-function CitationButton({
-  citationId,
+function QuestionsTab({
   report,
   onSelectCitation,
-}: {
-  citationId: string;
-  report: ReportResponse;
-  onSelectCitation: (citationId: string) => void;
-}) {
+  onUseQuestion,
+}: ReportTabProps & { onUseQuestion: (question: string) => void }) {
+  return (
+    <div className="mx-auto max-w-[900px]">
+      {report.suggested_questions.length < 5 && <InlineNotice className="mt-5" message={`Báo cáo hiện có ${report.suggested_questions.length}/5 câu hỏi theo ngưỡng mục tiêu.`} />}
+      <div className="mt-7 space-y-4">
+        {report.suggested_questions.map((item, index) => (
+          <article key={item.question} className="relative overflow-hidden rounded-lg border border-[#d8d5cb] bg-white p-5 transition-colors hover:border-[#747878] sm:p-6">
+            <span className={cn("absolute inset-y-0 left-0 w-1", index % 2 === 0 ? "bg-[#291800]" : "bg-[#566340]")} />
+            <div className="pl-2">
+              <div className="min-w-0 flex-1">
+                <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[#747878]">Câu hỏi {index + 1}</p>
+                <h2 className="font-medium leading-7">{item.question}</h2>
+                <p className="mt-2 text-sm leading-6 text-[#62655f]"><strong>Lý do:</strong> {item.rationale}</p>
+                <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+                <Button type="button" variant="outline" className="mt-4" onClick={() => onUseQuestion(item.question)}>
+                  <MessageSquareText className="size-4" /> Dùng câu hỏi này
+                </Button>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RelatedTab({ report, onSelectCitation }: ReportTabProps) {
+  return (
+    <div className="mx-auto max-w-[900px]">
+      {report.related_documents.length ? (
+        <div className="mt-7 space-y-4">
+          {report.related_documents.map((item) => (
+          <article key={`${item.document_number}-${item.title}`} className="rounded-lg border border-[#d8d5cb] bg-white p-6 transition-shadow hover:shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
+                <div>
+                  <Badge variant="outline" className="rounded-md font-mono">{item.document_number}</Badge>
+                  <h2 className="mt-3 text-lg font-semibold">{item.title}</h2>
+                  <p className="mt-2 text-sm text-[#62655f]">Nguồn: {sourceLabel(item.source)}</p>
+                </div>
+                <div className="max-w-xl text-sm leading-7 text-[#555952]">{item.reason}</div>
+              </div>
+              <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+            </article>
+          ))}
+        </div>
+      ) : <EmptyState title="Chưa phát hiện văn bản liên quan" description="Backend không trả về căn cứ liên quan cho tài liệu này." />}
+    </div>
+  );
+}
+
+function CitedParagraph({ item, report, onSelectCitation }: { item: { text: string; citation_ids: string[] }; report: ReportResponse; onSelectCitation: (citationId: string) => void }) {
+  return (
+    <div className="border-l-2 border-[#dbe5c9] pl-4">
+      <p className="text-sm leading-7">{item.text}</p>
+      <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+    </div>
+  );
+}
+
+function CitationList({ ids, report, onSelectCitation }: { ids: string[]; report: ReportResponse; onSelectCitation: (citationId: string) => void }) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {ids.map((id) => <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />)}
+    </div>
+  );
+}
+
+function CitationButton({ citationId, report, onSelectCitation }: { citationId: string; report: ReportResponse; onSelectCitation: (citationId: string) => void }) {
   const citation = report.citations[citationId];
   if (!citation) return null;
-
   return (
-    <button
-      type="button"
-      onClick={() => onSelectCitation(citationId)}
-      className="rounded-full bg-[#566340] px-2.5 py-1 font-mono text-[11px] text-white"
-    >
-      {citationLabel(citation)}
+    <button type="button" onClick={() => onSelectCitation(citationId)} className="inline-flex items-center gap-1.5 rounded-full bg-[#566340] px-2.5 py-1 font-mono text-[11px] text-white transition hover:bg-[#414b31] focus-visible:outline-2 focus-visible:outline-offset-2">
+      <Quote className="size-3" /> {citationLabel(citation)}
     </button>
   );
 }
 
-function CitationViewer({
+function CitationDrawer({
   report,
   citationId,
   citation,
   page,
   isLoading,
+  error,
+  onClose,
 }: {
   report: ReportResponse;
   citationId: string;
   citation: CitationMeta | null;
   page: PageResponse | null;
   isLoading: boolean;
+  error: string | null;
+  onClose: () => void;
 }) {
   return (
-    <div className="min-h-full border-l border-[#c4c7c7] bg-[#fafaf7]">
-      <header className="flex h-18 items-center justify-between border-b border-[#c4c7c7]/70 px-5">
-        <div className="flex items-center gap-2 font-semibold">
-          <Quote className="size-4" />
-          Nguồn trích dẫn
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Nguồn trích dẫn">
+      <button type="button" aria-label="Đóng nguồn trích dẫn" className="absolute inset-0 bg-black/35" onClick={onClose} />
+      <aside className="absolute inset-y-0 right-0 flex w-full max-w-[520px] flex-col border-l border-[#c4c7c7] bg-[#fafaf7] shadow-[-4px_0_12px_rgba(0,0,0,0.04)]">
+        <header className="flex items-start justify-between border-b border-[#d4d5cf] p-5">
+          <div>
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#62655f]">Kiểm chứng căn cứ</p>
+            <h2 className="mt-1 text-xl font-semibold">Nguồn trích dẫn</h2>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Đóng"><X className="size-5" /></Button>
+        </header>
+        <div className="flex-1 overflow-y-auto p-5 sm:p-6">
+          {!citation ? <InlineError message="Citation không tồn tại trong báo cáo." /> : (
+            <>
+              <Badge variant="outline" className="rounded-md font-mono">{citationLabel(citation)}</Badge>
+              <h3 className="mt-4 break-words text-lg font-semibold">{report.file_name}</h3>
+              <dl className="mt-5 grid grid-cols-[92px_1fr] gap-x-3 gap-y-2 text-sm">
+                {citation.chapter && <><dt className="text-[#777a74]">Chương/Mục</dt><dd>{citation.chapter}</dd></>}
+                {citation.article && <><dt className="text-[#777a74]">Điều</dt><dd>{citation.article}</dd></>}
+                {citation.clause && <><dt className="text-[#777a74]">Khoản</dt><dd>{citation.clause}</dd></>}
+              </dl>
+              <section className="mt-6 rounded-xl border border-[#d4d5cf] bg-white p-5">
+                <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.14em] text-[#62655f]">Đoạn nguồn</p>
+                {isLoading ? <p className="flex items-center gap-2 text-sm text-[#62655f]"><LoaderCircle className="size-4 animate-spin" />Đang tải trang...</p> : error ? <InlineError message={error} /> : <p className="whitespace-pre-line text-sm leading-7 text-[#444841]">{page?.text ?? citation.excerpt}</p>}
+              </section>
+              <p className="mt-4 font-mono text-[10px] text-[#777a74]">Citation ID: {citationId}</p>
+            </>
+          )}
         </div>
-      </header>
-      <div className="space-y-6 p-5">
-        {!citation ? (
-          <p className="text-sm text-[#444748]">Chọn một citation để xem nguồn.</p>
-        ) : (
-          <>
-            <div>
-              <Badge variant="outline" className="rounded-sm font-mono uppercase">
-                {citationLabel(citation)}
-              </Badge>
-              <h3 className="mt-4 text-lg font-medium">{report.file_name}</h3>
-              <p className="mt-2 font-mono text-xs leading-5 text-[#444748]">
-                {[citation.chapter, citation.article, citation.clause].filter(Boolean).join(" / ")}
-              </p>
-            </div>
-            <div className="rounded-lg border border-[#c4c7c7] bg-white p-5 shadow-sm">
-              {isLoading ? (
-                <p className="text-sm text-[#444748]">Đang tải citation...</p>
-              ) : (
-                <p className="whitespace-pre-line text-sm leading-7 text-[#444748]">
-                  {page?.text ?? citation.excerpt}
-                </p>
-              )}
-            </div>
-            <Button type="button" variant="outline" className="w-full rounded-none">
-              <ExternalLink className="size-4" />
-              Mở toàn tài liệu
-            </Button>
-            <p className="font-mono text-[11px] text-[#444748]">Citation ID: {citationId}</p>
-          </>
-        )}
-      </div>
+      </aside>
     </div>
   );
 }
 
-function QaWorkspace({
+function ChatPopup({
+  open,
   report,
   messages,
   question,
   canAsk,
   isAsking,
+  error,
+  onOpen,
+  onClose,
   onQuestionChange,
   onSubmit,
   onSelectCitation,
 }: {
+  open: boolean;
   report: ReportResponse;
   messages: ChatMessage[];
   question: string;
   canAsk: boolean;
   isAsking: boolean;
+  error: string | null;
+  onOpen: () => void;
+  onClose: () => void;
   onQuestionChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onSelectCitation: (citationId: string) => void;
 }) {
-  return (
-    <div className="mx-auto flex min-h-[calc(100vh-130px)] max-w-3xl flex-col">
-      <div className="flex-1 space-y-8 pb-32">
-        <div className="flex justify-center">
-          <span className="rounded-full bg-[#f4f4ee] px-3 py-1 font-mono text-xs text-[#444748]">
-            Hôm nay, 09:41
+  if (!open) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-expanded="false"
+          aria-controls="result-chat-panel"
+          className="fixed bottom-4 right-4 z-40 flex items-center gap-3 rounded-full bg-[#111111] px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[#292b28] focus-visible:outline-2 focus-visible:outline-offset-2 md:hidden"
+        >
+          <MessageSquareText className="size-4" />
+          Hỏi về kết quả
+        </button>
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-expanded="false"
+          aria-controls="result-chat-panel"
+          className="fixed right-0 top-1/2 z-40 hidden -translate-y-1/2 flex-col items-center gap-3 rounded-l-xl border border-r-0 border-[#343633] bg-[#1a1c19] px-3 py-5 text-white shadow-[-4px_4px_18px_rgba(0,0,0,0.12)] transition hover:bg-[#30332e] focus-visible:outline-2 focus-visible:outline-offset-2 md:flex"
+        >
+          <span className="flex size-8 items-center justify-center rounded-lg bg-white/10">
+            <MessageSquareText className="size-4" />
           </span>
+          <span className="-rotate-180 text-xs font-semibold tracking-wide [writing-mode:vertical-rl]">
+            Hỏi về kết quả
+          </span>
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <aside
+      id="result-chat-panel"
+      className="fixed inset-y-0 right-0 z-40 flex h-dvh w-full flex-col overflow-hidden border-l border-[#c4c7c7] bg-white shadow-[-8px_0_32px_rgba(0,0,0,0.10)] sm:w-[430px]"
+      role="dialog"
+      aria-label="Hỏi đáp về kết quả"
+      aria-modal="false"
+    >
+      <header className="shrink-0 border-b border-[#c4c7c7]/60 bg-[#f4f4ee] px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#62655f]">Trợ lý theo ngữ cảnh</p>
+            <h2 className="mt-1 flex items-center gap-2 text-lg font-semibold"><MessageSquareText className="size-4" />Hỏi về kết quả</h2>
+            <p title={report.file_name} className="mt-1 max-w-[310px] truncate text-xs text-[#60655d]">{report.file_name}</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" className="shrink-0" onClick={onClose} aria-label="Ẩn cửa sổ hỏi đáp"><X className="size-4" /></Button>
         </div>
-        {messages.map((message, index) =>
-          message.role === "user" ? (
-            <div key={`${message.role}-${index}`} className="flex justify-end">
-              <div className="max-w-[486px] rounded-bl-xl rounded-br-xl rounded-tl-xl rounded-tr-sm bg-[#e8e8e3] px-6 py-4">
-                <p className="leading-7">{message.text}</p>
-              </div>
-            </div>
-          ) : (
-            <div key={`${message.role}-${index}`} className="space-y-2">
-              <p className="flex items-center gap-2 pl-1 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-[#444748]">
-                <MessageSquareText className="size-4" />
-                Antipaper AI
-              </p>
-              <div className="max-w-[560px] rounded-bl-xl rounded-br-xl rounded-tl-sm rounded-tr-xl border border-[#c4c7c7] bg-white px-6 py-5 shadow-sm">
-                <p className="leading-7">{message.text}</p>
-                {!message.insufficientEvidence && message.citationIds.length > 0 && (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {message.citationIds.map((id) => (
-                      <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
-                    ))}
-                  </div>
-                )}
-                {message.insufficientEvidence && (
-                  <Badge variant="outline" className="mt-4">
-                    Không đủ bằng chứng
-                  </Badge>
-                )}
-              </div>
-              <div className="flex gap-2 pl-1 text-[#444748]">
-                <button type="button" aria-label="Sao chép câu trả lời" className="p-1">
-                  <Copy className="size-4" />
-                </button>
-                <button type="button" aria-label="Hữu ích" className="p-1">
-                  <ThumbsUp className="size-4" />
-                </button>
-                <button type="button" aria-label="Không hữu ích" className="p-1">
-                  <ThumbsDown className="size-4" />
-                </button>
-              </div>
-            </div>
-          ),
-        )}
-      </div>
-      <form
-        onSubmit={onSubmit}
-        className="sticky bottom-0 bg-gradient-to-t from-[#fafaf4] via-[#fafaf4] to-transparent pb-6 pt-10"
-      >
-        <div className="flex items-end rounded-lg border border-[#c4c7c7] bg-white p-2 shadow-sm">
-          <textarea
-            value={question}
-            onChange={(event) => onQuestionChange(event.target.value)}
-            disabled={!canAsk || isAsking}
-            rows={1}
-            placeholder={canAsk ? "Đặt câu hỏi về tài liệu..." : "Tải và phân tích tài liệu trước khi hỏi..."}
-            className="min-h-12 flex-1 resize-none rounded-md border-0 bg-transparent px-3 py-3 outline-none disabled:cursor-not-allowed disabled:text-[#444748]/60"
-          />
-          <Button
-            type="submit"
-            disabled={!canAsk || isAsking || question.trim().length === 0}
-            className="h-11 rounded-md bg-[#d3e3b7] text-black hover:bg-[#c7d9a8]"
-            aria-label="Gửi câu hỏi"
-          >
-            <SendHorizontal className="size-5" />
-          </Button>
-        </div>
-        <p className="mt-3 text-center font-mono text-[11px] text-[#444748]/70">
-          AI có thể cung cấp thông tin không chính xác. Hãy kiểm chứng nguồn trích dẫn.
+        <p className="mt-3 border-l-2 border-[#566340] bg-white px-3 py-2 text-xs leading-5 text-[#444748]">
+          Phạm vi: tóm tắt, thuật ngữ, câu hỏi phản biện, văn bản liên quan và căn cứ trong kết quả này.
         </p>
-      </form>
+      </header>
+
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5" aria-live="polite">
+        {!messages.length && (
+          <div>
+            <p className="text-sm font-medium">Câu hỏi gợi ý</p>
+            <p className="mt-1 text-xs leading-5 text-[#62655f]">Chọn để điền vào ô hỏi; hệ thống sẽ không tự gửi.</p>
+            <div className="mt-3 space-y-2">
+              {report.suggested_questions.slice(0, 2).map((item) => (
+                <button key={item.question} type="button" onClick={() => onQuestionChange(item.question)} className="w-full rounded-lg border border-[#d8d5cb] bg-[#fafaf7] p-3 text-left text-xs leading-5 transition hover:border-[#747878] hover:bg-white">
+                  {item.question}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {messages.map((message, index) => message.role === "user" ? (
+          <div key={`user-${index}`} className="flex justify-end"><div className="max-w-[88%] rounded-xl rounded-tr-sm bg-[#e8e8e3] px-4 py-3"><p className="text-sm leading-6">{message.text}</p></div></div>
+        ) : (
+          <div key={`assistant-${index}`} className="max-w-[94%]">
+            <p className="mb-2 flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[#62655f]"><MessageSquareText className="size-4" />Antipaper AI</p>
+            <div className={cn("rounded-xl rounded-tl-sm border px-4 py-3", message.insufficientEvidence ? "border-amber-300 bg-amber-50" : "border-[#c4c7c7] bg-white")}>
+              <p className="text-sm leading-6">{message.text}</p>
+              {message.insufficientEvidence ? <Badge variant="outline" className="mt-4 border-amber-400">Không đủ bằng chứng</Badge> : <CitationList ids={message.citationIds} report={report} onSelectCitation={onSelectCitation} />}
+              <div className="mt-4 flex items-center justify-between border-t border-[#e3e4de] pt-3 text-xs text-[#777a74]">
+                <span>{formatLatency(message.latencyMs)}</span>
+                <button type="button" className="inline-flex items-center gap-1 hover:text-black" onClick={() => void navigator.clipboard?.writeText(message.text)}><Copy className="size-3.5" />Sao chép</button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {isAsking && <p className="flex items-center gap-2 text-sm text-[#62655f]"><LoaderCircle className="size-4 animate-spin" />Đang tìm bằng chứng trong tài liệu...</p>}
+      </div>
+      <div className="shrink-0 border-t border-[#c4c7c7]/60 bg-[#fafaf7] px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3">
+        {error && <InlineError className="mb-3" message={error} />}
+        <form onSubmit={onSubmit}>
+          <label htmlFor="result-question" className="sr-only">Câu hỏi về kết quả</label>
+          <div className="flex items-end rounded-lg border border-[#c4c7c7] bg-white p-2 shadow-sm focus-within:border-black">
+            <textarea id="result-question" value={question} onChange={(event) => onQuestionChange(event.target.value)} disabled={!canAsk || isAsking} rows={2} placeholder="Đặt câu hỏi về tài liệu..." className="min-h-12 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none disabled:cursor-not-allowed" />
+            <Button type="submit" disabled={!canAsk || isAsking || !question.trim()} size="icon" className="bg-[#566340] text-white" aria-label="Gửi câu hỏi"><SendHorizontal className="size-4" /></Button>
+          </div>
+        </form>
+        <p className="mt-2 text-center text-[10px] text-[#777a74]">Thiếu bằng chứng sẽ được từ chối thay vì suy đoán.</p>
+      </div>
+    </aside>
+  );
+}
+
+type HistorySession = { key: string; documentId: string | null; title: string; tasks: TaskHistoryItem[]; documentTask: TaskHistoryItem | null };
+
+function HistoryWorkspace({
+  page,
+  statusFilter,
+  typeFilter,
+  isLoading,
+  error,
+  onStatusFilter,
+  onTypeFilter,
+  onRetry,
+  onOpenDocument,
+  onPrevious,
+  onNext,
+}: {
+  page: TaskHistoryPage;
+  statusFilter: DocumentStatus | "";
+  typeFilter: TaskType | "";
+  isLoading: boolean;
+  error: string | null;
+  onStatusFilter: (value: DocumentStatus | "") => void;
+  onTypeFilter: (value: TaskType | "") => void;
+  onRetry: () => void;
+  onOpenDocument: (item: TaskHistoryItem) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  const sessions = useMemo(() => groupHistory(page.items), [page.items]);
+  return (
+    <div>
+      <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+        <SectionHeading eyebrow=" " title="Lịch sử xử lý" description=" " />
+        <div className="flex shrink-0 gap-2">
+          <label className="text-xs text-[#62655f]">Trạng thái<select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as DocumentStatus | "")} className="mt-1 block h-9 rounded-lg border border-[#c8cac3] bg-white px-3 text-sm text-[#1a1c19]"><option value="">Tất cả</option><option value="completed">Hoàn tất</option><option value="processing">Đang xử lý</option><option value="queued">Đang chờ</option><option value="failed">Thất bại</option></select></label>
+          <label className="text-xs text-[#62655f]">Loại tác vụ<select value={typeFilter} onChange={(event) => onTypeFilter(event.target.value as TaskType | "")} className="mt-1 block h-9 rounded-lg border border-[#c8cac3] bg-white px-3 text-sm text-[#1a1c19]"><option value="">Tất cả</option><option value="document_processing">Xử lý tài liệu</option><option value="question_answer">Hỏi đáp</option></select></label>
+        </div>
+      </div>
+      <div className="mt-7 flex items-center justify-between rounded-xl border border-[#d4d5cf] bg-white px-5 py-4">
+        <div><strong className="text-2xl">{page.total}</strong><span className="ml-2 text-sm text-[#62655f]">tác vụ được ghi nhận</span></div>
+        <Button type="button" variant="outline" onClick={onRetry} disabled={isLoading}><RefreshCcw className={cn("size-4", isLoading && "animate-spin")} />Làm mới</Button>
+      </div>
+      {error && <div className="mt-5"><InlineError message={error} /><Button type="button" variant="outline" className="mt-3" onClick={onRetry}>Thử lại</Button></div>}
+      {isLoading ? <div className="flex min-h-[300px] items-center justify-center text-sm text-[#62655f]"><LoaderCircle className="mr-2 size-5 animate-spin" />Đang tải lịch sử...</div> : !sessions.length && !error ? <EmptyState title="Chưa có lịch sử phù hợp" description="Thử đổi bộ lọc hoặc tải tài liệu mới để bắt đầu một phiên." /> : (
+        <div className="mt-5 space-y-4">
+          {sessions.map((session) => <HistorySessionCard key={session.key} session={session} onOpenDocument={onOpenDocument} />)}
+        </div>
+      )}
+      {page.total > page.limit && (
+        <div className="mt-6 flex items-center justify-between">
+          <span className="text-sm text-[#62655f]">Hiển thị {page.offset + 1}–{Math.min(page.offset + page.items.length, page.total)} / {page.total}</span>
+          <div className="flex gap-2"><Button type="button" variant="outline" size="icon" aria-label="Trang trước" disabled={page.offset === 0} onClick={onPrevious}><ChevronLeft className="size-4" /></Button><Button type="button" variant="outline" size="icon" aria-label="Trang sau" disabled={page.offset + page.limit >= page.total} onClick={onNext}><ChevronRight className="size-4" /></Button></div>
+        </div>
+      )}
     </div>
   );
+}
+
+function HistorySessionCard({ session, onOpenDocument }: { session: HistorySession; onOpenDocument: (item: TaskHistoryItem) => void }) {
+  const primary = session.documentTask ?? session.tasks[0];
+  return (
+    <article className="overflow-hidden rounded-xl border border-[#d4d5cf] bg-white">
+      <header className="flex flex-col gap-4 border-b border-[#e3e4de] bg-[#fbfbf7] p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2"><FileText className="size-5 shrink-0 text-[#566340]" /><h2 title={session.title} className="truncate font-semibold">{session.title}</h2></div>
+          <p className="mt-2 text-xs text-[#777a74]">Phiên gần nhất: {formatDate(primary.created_at)}{session.documentId ? ` · ID ${shortId(session.documentId)}` : ""}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2"><StatusBadge status={primary.status} />{session.documentTask?.status === "completed" && <Button type="button" variant="outline" onClick={() => onOpenDocument(session.documentTask!)}><BookOpenText className="size-4" />Mở báo cáo</Button>}</div>
+      </header>
+      <ol className="divide-y divide-[#ecece7]">
+        {session.tasks.map((task) => (
+          <li key={task.task_id} className="grid gap-3 p-5 sm:grid-cols-[150px_minmax(0,1fr)_110px] sm:items-start">
+            <div className="text-xs text-[#777a74]">{formatDate(task.created_at)}</div>
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-sm font-medium">{task.task_type === "document_processing" ? <FileText className="size-4" /> : <FileQuestion className="size-4" />}{task.task_type === "document_processing" ? "Phân tích tài liệu" : "Câu hỏi"}</p>
+              <p className="mt-1 break-words text-sm leading-6 text-[#555952]">{task.display_name}</p>
+              {task.error && <p className="mt-2 text-xs text-red-700">{task.error.code}: {task.error.message}</p>}
+              <div className="mt-2 flex flex-wrap gap-2 text-xs text-[#777a74]"><span>{stageLabel(task.stage)}</span>{task.cached && <Badge variant="outline">Cache hit</Badge>}{task.duration_seconds !== null && <span>{formatDuration(task.duration_seconds)}</span>}</div>
+            </div>
+            <div className="sm:text-right"><StatusBadge status={task.status} /><div className="mt-2 font-mono text-[10px] text-[#999b96]">{shortId(task.task_id)}</div></div>
+          </li>
+        ))}
+      </ol>
+    </article>
+  );
+}
+
+function groupHistory(items: TaskHistoryItem[]): HistorySession[] {
+  const groups = new Map<string, HistorySession>();
+  for (const item of items) {
+    const key = item.document_id ?? item.task_id;
+    const existing = groups.get(key) ?? { key, documentId: item.document_id, title: item.document_id ? `Tài liệu ${shortId(item.document_id)}` : item.display_name, tasks: [], documentTask: null };
+    existing.tasks.push(item);
+    if (item.task_type === "document_processing") {
+      if (!existing.documentTask || new Date(item.created_at) > new Date(existing.documentTask.created_at)) existing.documentTask = item;
+      existing.title = item.display_name;
+    }
+    groups.set(key, existing);
+  }
+  return Array.from(groups.values()).sort((a, b) => new Date(b.tasks[0].created_at).getTime() - new Date(a.tasks[0].created_at).getTime());
+}
+
+function StatusBadge({ status }: { status: DocumentStatus }) {
+  const labels: Record<DocumentStatus, string> = { queued: "Đang chờ", processing: "Đang xử lý", completed: "Hoàn tất", failed: "Thất bại" };
+  return <Badge variant="outline" className={cn("rounded-md", status === "completed" && "border-green-600 text-green-800", status === "failed" && "border-red-500 text-red-700", status === "processing" && "border-blue-500 text-blue-700")}>{labels[status]}</Badge>;
+}
+
+function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return <div className="max-w-3xl"><p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#62655f]">{eyebrow}</p><h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1><p className="mt-3 leading-7 text-[#62655f]">{description}</p></div>;
+}
+
+function InlineError({ message, className }: { message: string; className?: string }) {
+  return <p role="alert" className={cn("flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800", className)}><AlertTriangle className="mt-0.5 size-4 shrink-0" />{message}</p>;
+}
+
+function InlineNotice({ message, className }: { message: string; className?: string }) {
+  return <p className={cn("flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900", className)}><AlertTriangle className="mt-0.5 size-4 shrink-0" />{message}</p>;
+}
+
+function EmptyState({ title, description, actionLabel, onAction }: { title: string; description: string; actionLabel?: string; onAction?: () => void }) {
+  return <div className="mt-7 flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-dashed border-[#c8cac3] bg-white p-8 text-center"><span className="flex size-12 items-center justify-center rounded-full bg-[#ecece5]"><FileQuestion className="size-5" /></span><h2 className="mt-4 font-semibold">{title}</h2><p className="mt-2 max-w-md text-sm leading-6 text-[#62655f]">{description}</p>{actionLabel && onAction && <Button type="button" className="mt-5" onClick={onAction}>{actionLabel}</Button>}</div>;
+}
+
+function sourceLabel(value: string) {
+  return value === "cited_in_document" ? "Được dẫn trong tài liệu" : value;
+}
+
+function shortId(value: string) {
+  return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Bangkok" }).format(new Date(value));
+}
+
+function formatDuration(value: number) {
+  return value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(1)} giây`;
+}
+
+function formatLatency(value: number) {
+  return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} giây`;
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function persistActiveDocument(documentId: string | null) {
+  try {
+    if (documentId) window.localStorage.setItem(ACTIVE_DOCUMENT_STORAGE_KEY, documentId);
+    else window.localStorage.removeItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+  } catch {
+    // Storage is optional; the active in-memory session remains functional.
+  }
+}
+
+function readActiveDocument(): string | null {
+  try {
+    return window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
