@@ -18,9 +18,10 @@ from typing import TYPE_CHECKING, Iterable, Sequence
 import cv2
 import numpy as np
 from PIL import Image
-from ultralytics import YOLO
 
 if TYPE_CHECKING:
+    from ultralytics import YOLO
+
     from .paddle_ocr import TableData
 
 
@@ -58,6 +59,13 @@ class TableDetector:
         """
 
         weights = str(self.model_path) if self.model_path else "yolov8n.pt"
+        try:
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise RuntimeError(
+                "ultralytics is required only when YOLO table detection is enabled."
+            ) from exc
+
         self.model = YOLO(weights)
         return self.model
 
