@@ -14,6 +14,7 @@ frontend/.next/
 frontend/out/
 frontend/.env*
 frontend/.vercel/
+/.vercel/
 
 *.log
 

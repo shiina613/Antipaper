@@ -59,6 +59,7 @@ if service.llm_status == "disabled":
 
 @app.get("/")
 @app.get("/health")
+@app.get("/api/health")
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
