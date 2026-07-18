@@ -56,4 +56,3 @@ def load_release_records(path: str | Path) -> list[ReleaseRecord]:
     if len(identifiers) != len(set(identifiers)):
         raise ValueError("release dataset record IDs must be unique")
     return records
-

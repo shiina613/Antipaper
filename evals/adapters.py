@@ -59,4 +59,3 @@ class BenchmarkApplication:
             file_name=self.path.name,
             file_bytes=self.file_bytes,
         )
-
