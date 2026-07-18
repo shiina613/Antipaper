@@ -109,15 +109,15 @@ def test_artifact_cache_survives_new_service_instance(tmp_path) -> None:
     assert report.document_id == document_id
 
 
-def test_too_large_file_returns_standard_error_envelope() -> None:
+def test_large_file_upload_is_accepted() -> None:
     response = client.post(
         "/api/v1/documents",
         files={"file": ("demo.pdf", b"x" * (25 * 1024 * 1024 + 1), "application/pdf")},
     )
-    assert response.status_code == 413
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["error"]["code"] == "FILE_TOO_LARGE"
-    assert payload["error"]["retryable"] is False
+    assert payload["document_id"]
+    assert payload["status"] in {"queued", "processing", "completed"}
 
 
 def test_broken_docx_marks_document_as_failed() -> None:

@@ -33,7 +33,6 @@ except ModuleNotFoundError:  # pragma: no cover - package import fallback
     from src.retrieval import RetrievalIndex, build_index, build_index_async
 
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 PROCESSING_WAIT_TIMEOUT_SECONDS = 15.0
 STAGE_QUEUED = "queued"
@@ -42,7 +41,6 @@ STAGE_GENERATING = "generating"
 STAGE_READY = "ready"
 STAGE_FAILED = "failed"
 FAILED_ERROR_STATUSES = {
-    "FILE_TOO_LARGE": 413,
     "UNSUPPORTED_FILE": 415,
     "INVALID_OUTPUT": 502,
     "MODEL_TIMEOUT": 504,
@@ -123,14 +121,6 @@ class DocumentStore:
         self._artifact_root.mkdir(parents=True, exist_ok=True)
 
     def submit_upload(self, file_name: str, file_bytes: bytes) -> tuple[DocumentRecord, bool]:
-        if len(file_bytes) > MAX_UPLOAD_BYTES:
-            raise ApiError(
-                code="FILE_TOO_LARGE",
-                message="File too large. Maximum size is 25 MB.",
-                status_code=413,
-                retryable=False,
-            )
-
         extension = Path(file_name).suffix.lower()
         if extension not in ALLOWED_EXTENSIONS:
             raise ApiError(

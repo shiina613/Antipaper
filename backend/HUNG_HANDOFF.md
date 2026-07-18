@@ -12,7 +12,7 @@ dong goi deploy.
 - CORS da bat de frontend co the tich hop.
 - Pydantic schemas da dinh nghia cho upload, status, report, question, page va error envelope.
 - Error format thong nhat theo dang `{"error": {"code", "message", "retryable"}}`.
-- Upload ho tro PDF/DOCX, gioi han 25 MB.
+- Upload ho tro PDF/DOCX, khong con chan gioi han 25 MB o backend.
 - Upload da toi uu theo streaming request body de giam peak memory.
 - Job store in-memory co polling status, stage, progress va failed state.
 - Xu ly document chay qua thread pool de request upload khong bi block.

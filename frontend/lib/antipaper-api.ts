@@ -1,5 +1,4 @@
 const API_BASE = "/api/v1";
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -216,10 +215,6 @@ export function validateDocumentFile(file: File): string | null {
 
   if (!SUPPORTED_TYPES.has(file.type) && !supportedByExtension) {
     return "Chỉ hỗ trợ PDF hoặc DOCX.";
-  }
-
-  if (file.size > MAX_FILE_SIZE) {
-    return "Tệp vượt quá giới hạn 25 MB.";
   }
 
   return null;

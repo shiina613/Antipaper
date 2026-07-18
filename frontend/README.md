@@ -49,7 +49,7 @@ Nếu backend chưa chạy hoặc API lỗi, adapter trong `lib/antipaper-api.ts
 
 ## Luồng chính
 
-1. Người dùng chọn PDF/DOCX tối đa 25 MB.
+1. Người dùng chọn một hoặc nhiều file PDF/DOCX.
 2. UI gọi upload API.
 3. UI poll status cho tới `completed` hoặc `failed`.
 4. Khi hoàn tất, UI lấy report và render summary, thuật ngữ, câu hỏi gợi ý.
@@ -66,6 +66,6 @@ Nếu backend chưa chạy hoặc API lỗi, adapter trong `lib/antipaper-api.ts
 ## Ghi chú phát triển
 
 - Không cần env var cho mock mode; fallback tự động khi API không sẵn sàng.
-- File upload chỉ nhận PDF/DOCX, tối đa 25 MB theo API contract.
+- File upload chỉ nhận PDF/DOCX; frontend có thể chọn nhiều file và upload tuần tự qua API hiện có.
 - Q&A không render citation giả khi backend trả `insufficient_evidence=true`.
 - Citation ID phải tồn tại trong `report.citations` mới được hiển thị.

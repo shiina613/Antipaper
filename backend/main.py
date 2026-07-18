@@ -28,9 +28,6 @@ from . import __version__
 
 load_dotenv()
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
@@ -198,14 +195,6 @@ async def _read_multipart_file(request: Request, boundary: str) -> tuple[str, by
             file_bytes = bytes(buffer[:split_index].rstrip(b"\r\n"))
             file_stream.write(file_bytes)
             file_size += len(file_bytes)
-            if file_size > MAX_UPLOAD_BYTES:
-                file_stream.close()
-                raise ApiError(
-                    code="FILE_TOO_LARGE",
-                    message="File too large. Maximum size is 25 MB.",
-                    status_code=413,
-                    retryable=False,
-                )
             file_stream.seek(0)
             return file_name, file_stream.read()
 
@@ -214,28 +203,12 @@ async def _read_multipart_file(request: Request, boundary: str) -> tuple[str, by
             file_chunk = bytes(buffer[:safe_write_upto])
             file_stream.write(file_chunk)
             file_size += len(file_chunk)
-            if file_size > MAX_UPLOAD_BYTES:
-                file_stream.close()
-                raise ApiError(
-                    code="FILE_TOO_LARGE",
-                    message="File too large. Maximum size is 25 MB.",
-                    status_code=413,
-                    retryable=False,
-                )
             del buffer[:safe_write_upto]
 
     if seen_headers:
         file_chunk = bytes(buffer.rstrip(b"\r\n"))
         file_stream.write(file_chunk)
         file_size += len(file_chunk)
-        if file_size > MAX_UPLOAD_BYTES:
-            file_stream.close()
-            raise ApiError(
-                code="FILE_TOO_LARGE",
-                message="File too large. Maximum size is 25 MB.",
-                status_code=413,
-                retryable=False,
-            )
         file_stream.seek(0)
         return file_name, file_stream.read()
 

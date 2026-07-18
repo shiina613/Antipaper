@@ -100,7 +100,7 @@ export default function Home() {
   const [documentStatus, setDocumentStatus] = useState<DocumentStatus>("queued");
   const [status, setStatus] = useState<StatusResponse>(initialStatus);
   const [report, setReport] = useState<ReportResponse | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
@@ -124,21 +124,22 @@ export default function Home() {
   }, [activeReport.file_name, status.stage, view]);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    setSelectedFile(file);
-    setUploadError(file ? validateDocumentFile(file) : null);
+    const files = Array.from(event.target.files ?? []);
+    setSelectedFiles(files);
+    const invalid = files.find((file) => validateDocumentFile(file));
+    setUploadError(invalid ? `${invalid.name}: ${validateDocumentFile(invalid)}` : null);
   }
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedFile) {
-      setUploadError("Vui lòng chọn một tệp PDF hoặc DOCX.");
+    if (selectedFiles.length === 0) {
+      setUploadError("Vui lòng chọn ít nhất một tệp PDF hoặc DOCX.");
       return;
     }
 
-    const validationError = validateDocumentFile(selectedFile);
-    if (validationError) {
-      setUploadError(validationError);
+    const invalid = selectedFiles.find((file) => validateDocumentFile(file));
+    if (invalid) {
+      setUploadError(`${invalid.name}: ${validateDocumentFile(invalid)}`);
       return;
     }
 
@@ -146,7 +147,15 @@ export default function Home() {
     setUploadError(null);
     setView("processing");
 
-    const upload = await uploadDocument(selectedFile);
+    let upload: Awaited<ReturnType<typeof uploadDocument>> | null = null;
+    for (const file of selectedFiles) {
+      upload = await uploadDocument(file);
+    }
+    if (!upload) {
+      setUploadError("Không có tệp nào được tải lên.");
+      setIsUploading(false);
+      return;
+    }
     setApiMode(upload.apiMode);
     setDocumentId(upload.document_id);
     setDocumentStatus(upload.status);
@@ -168,7 +177,7 @@ export default function Home() {
     setReport(null);
     setDocumentStatus("queued");
     setStatus(initialStatus);
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setUploadError(null);
     setIsUploading(false);
     setIsPolling(false);
@@ -267,7 +276,7 @@ export default function Home() {
             {view === "upload" && (
               <UploadWorkspace
                 fileInputRef={fileInputRef}
-                selectedFile={selectedFile}
+                selectedFiles={selectedFiles}
                 uploadError={uploadError}
                 isUploading={isUploading}
                 onFileChange={handleFileChange}
@@ -405,14 +414,14 @@ function TopBar({
 
 function UploadWorkspace({
   fileInputRef,
-  selectedFile,
+  selectedFiles,
   uploadError,
   isUploading,
   onFileChange,
   onSubmit,
 }: {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
-  selectedFile: File | null;
+  selectedFiles: File[];
   uploadError: string | null;
   isUploading: boolean;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -423,13 +432,14 @@ function UploadWorkspace({
       <section>
         <div className="mb-6">
           <h2 className="text-2xl font-medium tracking-tight">Tải tài liệu họp</h2>
-          <p className="mt-2 text-[#444748]">Hỗ trợ PDF, DOCX. Tối đa 25MB mỗi tệp.</p>
+          <p className="mt-2 text-[#444748]">Hỗ trợ PDF, DOCX. Có thể chọn nhiều tệp.</p>
         </div>
         <label className="flex min-h-[400px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#c4c7c7] bg-white p-8 text-center shadow-sm">
           <input
             ref={fileInputRef}
             type="file"
             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            multiple
             className="sr-only"
             onChange={onFileChange}
           />
@@ -437,9 +447,16 @@ function UploadWorkspace({
             <FileUp className="size-9" />
           </span>
           <span className="text-lg font-medium">
-            {selectedFile ? selectedFile.name : "Kéo thả tài liệu hoặc chọn từ máy"}
+            {selectedFiles.length > 0
+              ? `${selectedFiles.length} tệp đã chọn`
+              : "Kéo thả tài liệu hoặc chọn từ máy"}
           </span>
-          <span className="mt-3 text-sm text-[#444748]">PDF/DOCX, tối đa 25MB</span>
+          <span className="mt-3 text-sm text-[#444748]">PDF/DOCX, không giới hạn 25MB</span>
+          {selectedFiles.length > 0 && (
+            <span className="mt-4 max-w-full truncate text-sm text-[#444748]">
+              {selectedFiles.map((file) => file.name).join(", ")}
+            </span>
+          )}
         </label>
         {uploadError && (
           <p className="mt-4 flex items-center gap-2 text-sm text-red-700">
