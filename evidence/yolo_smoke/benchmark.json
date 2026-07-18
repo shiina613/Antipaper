@@ -1,0 +1,30 @@
+{
+  "method": "YOLOv8 table detection only",
+  "ocr_available": false,
+  "pdf": "C:\\Users\\Admin\\Desktop\\Antipaper\\data\\01.pdf",
+  "model": "C:\\Users\\Admin\\Desktop\\Antipaper\\models\\table_detect_yolov8.pt",
+  "model_sha256": "93b9ab71462a376214872d2f6000775e10abee87441e5e8a3c3f5e4bbfff3489",
+  "classes": {
+    "0": "bordered",
+    "1": "borderless"
+  },
+  "confidence_threshold": 0.25,
+  "requested_device": "cpu",
+  "torch": "2.7.1+cpu",
+  "cuda_available": false,
+  "cuda_version": null,
+  "gpu": null,
+  "pages": [
+    {
+      "page": 1,
+      "image_size": [
+        1191,
+        1684
+      ],
+      "inference_seconds": 3.052208900000551,
+      "detections": []
+    }
+  ],
+  "total_detections": 0,
+  "total_seconds": 3.1576628999973764
+}
