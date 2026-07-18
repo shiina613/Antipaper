@@ -12,8 +12,20 @@ import threading
 import time
 from pathlib import Path
 
+try:
+    from intelligence import NormalizedDocument
+    from retrieval import RetrievalIndex
+except ModuleNotFoundError:
+    from src.intelligence import NormalizedDocument
+    from src.retrieval import RetrievalIndex
+
 from .errors import ApiError
-from .orchestrator import DocumentOrchestrator, ProcessedDocument, StitchedPage
+from .orchestrator import (
+    DocumentOrchestrator,
+    ProcessedDocument,
+    QuestionTrace,
+    StitchedPage,
+)
 from .schemas import (
     DocumentReport,
     DocumentStatus,
@@ -68,6 +80,9 @@ class DocumentRecord:
     pages: list[PageRecord] = field(default_factory=list)
     report: DocumentReport | None = None
     processed_document: ProcessedDocument | None = field(default=None, repr=False, compare=False)
+    normalized_document: NormalizedDocument | None = field(default=None, repr=False, compare=False)
+    retrieval_index: RetrievalIndex | None = field(default=None, repr=False, compare=False)
+    last_question_trace: QuestionTrace | None = field(default=None, repr=False, compare=False)
     future: Future[None] | None = field(default=None, repr=False, compare=False)
 
 
@@ -168,6 +183,10 @@ class DocumentStore:
             processing_seconds = round(time.perf_counter() - start, 3)
             record.processed_document = result.processed_document
             record.processed_document.processing_seconds = processing_seconds
+            record.normalized_document = result.normalized_document
+            record.retrieval_index = self._orchestrator.build_retrieval_index(
+                result.normalized_document
+            )
             record.pages = self._build_pages(result.processed_document)
             record.page_count = result.processed_document.page_count
             record.report = result.report.model_copy(update={"processing_seconds": processing_seconds})
@@ -222,7 +241,7 @@ class DocumentStore:
 
     def get_page(self, document_id: str, page_number: int) -> PageResponse:
         record = self.ensure_processed(document_id)
-        if record.processed_document is None:
+        if record.normalized_document is None:
             if record.status == "failed" and record.error:
                 raise self._api_error_from_record_error(record.error)
             raise ApiError(
@@ -248,7 +267,7 @@ class DocumentStore:
 
     def answer_question(self, document_id: str, question: str) -> QuestionResponse:
         record = self.ensure_processed(document_id)
-        if record.processed_document is None:
+        if record.normalized_document is None:
             if record.status == "failed" and record.error:
                 raise self._api_error_from_record_error(record.error)
             raise ApiError(
@@ -258,9 +277,14 @@ class DocumentStore:
                 retryable=True,
             )
         start = time.perf_counter()
-        response = self._orchestrator.answer_question(record.processed_document, question)
+        if record.retrieval_index is None:
+            record.retrieval_index = self._orchestrator.build_retrieval_index(
+                record.normalized_document
+            )
+        trace = self._orchestrator.answer_question(record.retrieval_index, question)
+        record.last_question_trace = trace
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        return response.model_copy(update={"latency_ms": latency_ms})
+        return trace.response.model_copy(update={"latency_ms": latency_ms})
 
     def _start_processing(self, record: DocumentRecord) -> None:
         record.status = "queued"
@@ -310,18 +334,25 @@ class DocumentStore:
         record: DocumentRecord,
         result: object,
     ) -> None:
-        if not hasattr(result, "processed_document") or not hasattr(result, "report"):
+        if (
+            not hasattr(result, "processed_document")
+            or not hasattr(result, "normalized_document")
+            or not hasattr(result, "report")
+        ):
             raise ValueError("Orchestrator returned an invalid result object.")
 
         processed_document = getattr(result, "processed_document")
+        normalized_document = getattr(result, "normalized_document")
         report = getattr(result, "report")
-        if processed_document is None or report is None:
+        if processed_document is None or normalized_document is None or report is None:
             raise ValueError("Orchestrator returned empty processing output.")
 
         if getattr(report, "document_id", None) != record.document_id:
             raise ValueError("Report document_id does not match the uploaded document.")
         if getattr(report, "page_count", None) != getattr(processed_document, "page_count", None):
             raise ValueError("Report page_count does not match the processed document.")
+        if getattr(normalized_document, "document_id", None) != record.document_id:
+            raise ValueError("Normalized document_id does not match the uploaded document.")
 
     def _api_error_from_record_error(self, error_text: str) -> ApiError:
         code, _, message = error_text.partition(": ")
@@ -359,6 +390,9 @@ class DocumentStore:
     def _report_path(self, document_id: str) -> Path:
         return self._artifact_dir(document_id) / "report.json"
 
+    def _normalized_path(self, document_id: str) -> Path:
+        return self._artifact_dir(document_id) / "normalized.json"
+
     def _persist_artifacts(self, record: DocumentRecord) -> None:
         try:
             artifact_dir = self._artifact_dir(record.document_id)
@@ -367,13 +401,21 @@ class DocumentStore:
                 json.dumps(self._serialize_manifest(record), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            if record.status == "completed" and record.report is not None:
+            if (
+                record.status == "completed"
+                and record.report is not None
+                and record.normalized_document is not None
+            ):
                 self._pages_path(record.document_id).write_text(
                     json.dumps(self._serialize_pages(record.pages), ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
                 self._report_path(record.document_id).write_text(
                     record.report.model_dump_json(indent=2),
+                    encoding="utf-8",
+                )
+                self._normalized_path(record.document_id).write_text(
+                    record.normalized_document.model_dump_json(indent=2),
                     encoding="utf-8",
                 )
         except Exception:  # pragma: no cover - artifact persistence is best effort
@@ -383,6 +425,7 @@ class DocumentStore:
         manifest_path = self._manifest_path(document_id)
         report_path = self._report_path(document_id)
         pages_path = self._pages_path(document_id)
+        normalized_path = self._normalized_path(document_id)
         if not manifest_path.exists():
             return None
 
@@ -405,10 +448,20 @@ class DocumentStore:
                 page_count=int(manifest.get("page_count", 0)),
             )
             if record.status == "completed":
-                if not report_path.exists() or not pages_path.exists():
+                if (
+                    not report_path.exists()
+                    or not pages_path.exists()
+                    or not normalized_path.exists()
+                ):
                     return None
                 record.report = DocumentReport.model_validate_json(report_path.read_text(encoding="utf-8"))
                 record.pages = self._deserialize_pages(json.loads(pages_path.read_text(encoding="utf-8")))
+                record.normalized_document = NormalizedDocument.model_validate_json(
+                    normalized_path.read_text(encoding="utf-8")
+                )
+                record.retrieval_index = self._orchestrator.build_retrieval_index(
+                    record.normalized_document
+                )
                 record.processed_document = ProcessedDocument(
                     source_name=record.file_name,
                     page_count=record.page_count,

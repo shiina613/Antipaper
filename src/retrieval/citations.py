@@ -4,7 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
+try:
+    from intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
+except ModuleNotFoundError:  # Package import via ``src.retrieval``.
+    from src.intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
 
 
 def _normalize_text(value: str) -> str:
@@ -13,6 +16,13 @@ def _normalize_text(value: str) -> str:
 
 def _excerpt_is_source(excerpt: str, source: str) -> bool:
     """Accept source-leading excerpts despite terminal punctuation differences."""
+    # Ingestion deliberately caps excerpts by character count, which can end in
+    # the middle of a word. A normalized character-prefix check preserves that
+    # safe truncation without weakening the requirement that the excerpt starts
+    # at the beginning of the authoritative chunk.
+    normalized_excerpt = _normalize_text(excerpt).rstrip(".…").rstrip()
+    if normalized_excerpt and _normalize_text(source).startswith(normalized_excerpt):
+        return True
     excerpt_words = excerpt.casefold().split()
     source_words = source.casefold().split()
     if source_words[: len(excerpt_words)] == excerpt_words:

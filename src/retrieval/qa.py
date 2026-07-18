@@ -83,7 +83,12 @@ def _extractive_sources(question: str, results: list[RetrievalResult]) -> tuple[
     covered: set[str] = set()
     for result in results:
         overlap = words & _meaningful_words(result.chunk.text)
-        if not overlap or overlap <= covered:
+        uncovered = overlap - covered
+        # The first source establishes the primary evidence. Additional sources
+        # must contribute at least three new query concepts; accepting a chunk
+        # for one or two generic words produces citation fan-out and lowers
+        # precision on long documents.
+        if not overlap or (selected and len(uncovered) < 3):
             continue
         sentence = _extractive(question, [result])
         sentences.append(sentence)
@@ -107,6 +112,7 @@ class GroundedQAService:
         has_legal_identifier = bool(re.search(r"\b(?:điều|khoản)\s+\d+", question.casefold()))
         document_frequency = {word: sum(word in _meaningful_words(chunk.text) for chunk in self.index.chunks) for word in query_words}
         support = []
+        retrieved_ids = [result.chunk_id for result in results]
         for result in results:
             if has_legal_identifier and not _legal_identifier_matches(question, result):
                 continue
@@ -117,12 +123,21 @@ class GroundedQAService:
             rare_overlap = sum(document_frequency[word] == 1 for word in overlap)
             semantic_supported = result.semantic_score >= 0.8 and semantic_margin >= 0.15 and len(overlap) >= 2 and rare_overlap >= 2
             legal_identifier = has_legal_identifier and bool(overlap)
-            lexical_supported = result.lexical_score > 0 and len(overlap) >= 2 and rare_overlap >= 2
+            lexical_supported = result.lexical_score > 0 and (
+                (len(overlap) >= 2 and rare_overlap >= 2)
+                or len(overlap) >= 5
+            )
             if exact_phrase or legal_identifier or lexical_supported or semantic_supported:
                 support.append(result)
-        retrieved_ids = [r.chunk_id for r in support]
         if not support:
-            return GroundedAnswer("Không đủ thông tin trong tài liệu để trả lời.", (), 0.0, True, (time.perf_counter() - started) * 1000, retrieved_ids=())
+            return GroundedAnswer(
+                "Không đủ thông tin trong tài liệu để trả lời.",
+                (),
+                0.0,
+                True,
+                (time.perf_counter() - started) * 1000,
+                retrieved_ids=tuple(retrieved_ids),
+            )
         fallback, selected_sources = _extractive_sources(question, support)
         selected_sources.sort(key=lambda item: (item.chunk.page, item.chunk.chunk_id))
         fallback = " ".join(_extractive(question, [result]) for result in selected_sources)

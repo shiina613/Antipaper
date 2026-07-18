@@ -2,20 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 import hashlib
 from io import BytesIO
 import re
+from typing import Any, Callable
 import xml.etree.ElementTree as ET
 import zipfile
 
 import fitz
+from pydantic import BaseModel
 
 try:
-    from intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
+    from intelligence import (
+        Citation as DomainCitation,
+        DocumentChunk,
+        IntelligenceReport,
+        MeetingIntelligenceEngine,
+        MeetingIntelligenceReport,
+        NormalizedDocument,
+        build_intelligence,
+    )
+    from retrieval import GroundedQAService, RetrievalIndex, build_index
 except ModuleNotFoundError:  # Running backend from repo root without pytest PYTHONPATH.
-    from src.intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
+    from src.intelligence import (
+        Citation as DomainCitation,
+        DocumentChunk,
+        IntelligenceReport,
+        MeetingIntelligenceEngine,
+        MeetingIntelligenceReport,
+        NormalizedDocument,
+        build_intelligence,
+    )
+    from src.retrieval import GroundedQAService, RetrievalIndex, build_index
 
+from .llm import build_shared_llm_client
 from .schemas import (
     Citation,
     DocumentReport,
@@ -59,46 +81,128 @@ class ProcessedDocument:
 @dataclass(frozen=True)
 class OrchestrationResult:
     processed_document: ProcessedDocument
+    normalized_document: NormalizedDocument
     report: DocumentReport
+
+
+@dataclass(frozen=True)
+class QuestionTrace:
+    """Internal retrieval evidence used by evaluation, never serialized by the API."""
+
+    response: QuestionResponse
+    retrieved_ids: tuple[str, ...]
+    retrieval_context: tuple[str, ...]
+    retrieval_scores: tuple[float, ...]
+
+
+class _QAOutput(BaseModel):
+    answer: str
+    citation_ids: list[str]
 
 
 class DocumentOrchestrator:
     """Translate uploaded bytes into processed documents and API responses."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        call_llm: Callable[..., Any] | None = None,
+        embedding: Callable[[str], Any] | None = None,
+        use_configured_llm: bool = True,
+    ) -> None:
         self._engine = MeetingIntelligenceEngine()
+        self._call_llm = (
+            call_llm
+            if call_llm is not None
+            else build_shared_llm_client() if use_configured_llm else None
+        )
+        self._embedding = embedding
 
     def process(self, *, document_id: str, file_name: str, file_bytes: bytes) -> OrchestrationResult:
+        processed_document, normalized_document = self.ingest(
+            document_id=document_id,
+            file_name=file_name,
+            file_bytes=file_bytes,
+        )
+        report = self._build_report(
+            document_id=document_id,
+            processed_document=processed_document,
+            normalized_document=normalized_document,
+            file_name=file_name,
+        )
+        return OrchestrationResult(
+            processed_document=processed_document,
+            normalized_document=normalized_document,
+            report=report,
+        )
+
+    def ingest(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        file_bytes: bytes,
+    ) -> tuple[ProcessedDocument, NormalizedDocument]:
+        """Extract and normalize once for intelligence, retrieval, cache, and evals."""
+
         processed_document = self._load_document(file_name=file_name, file_bytes=file_bytes)
         if not processed_document.chunks:
             processed_document.chunks = self._engine.extract_chunks(processed_document)
 
-        report = self._build_report(
+        normalized_document = self._normalize_document(
             document_id=document_id,
-            processed_document=processed_document,
             file_name=file_name,
+            processed_document=processed_document,
         )
-        return OrchestrationResult(processed_document=processed_document, report=report)
+        return processed_document, normalized_document
 
-    def answer_question(self, processed_document: ProcessedDocument, question: str) -> QuestionResponse:
-        answer: GroundedAnswer = self._engine.answer_question_from_document(
-            document=processed_document,
-            question=question,
-        )
-        if not answer.citations:
-            return QuestionResponse(
-                answer=answer.answer,
-                insufficient_evidence=True,
-                citation_ids=[],
-                latency_ms=0.0,
+    def build_retrieval_index(self, document: NormalizedDocument) -> RetrievalIndex:
+        return build_index(document, embedding=self._embedding)
+
+    def answer_question(
+        self,
+        index: RetrievalIndex,
+        question: str,
+    ) -> QuestionTrace:
+        candidates = index.search(question, top_k=5)
+
+        async def qa_llm(prompt: dict[str, str]) -> dict[str, Any]:
+            if self._call_llm is None:
+                return {}
+            response = await self._call_llm(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Chỉ trả lời bằng dữ liệu trong context. Trả JSON gồm answer và "
+                            "citation_ids; không đủ nguồn thì để citation_ids rỗng."
+                        ),
+                    },
+                    {"role": "user", "content": str(prompt)},
+                ],
+                _QAOutput,
             )
+            return response.model_dump()
 
-        citation_ids = self._question_citations_to_ids(answer.citations, processed_document.page_count)
-        return QuestionResponse(
-            answer=answer.answer,
-            insufficient_evidence=False,
-            citation_ids=citation_ids,
-            latency_ms=0.0,
+        result = asyncio.run(
+            GroundedQAService(
+                index,
+                llm=qa_llm if self._call_llm is not None else None,
+            ).answer(question, top_k=5)
+        )
+        by_id = {candidate.chunk_id: candidate for candidate in candidates}
+        traced = [by_id[item_id] for item_id in result.retrieved_ids if item_id in by_id]
+        response = QuestionResponse(
+            answer=result.answer,
+            insufficient_evidence=result.insufficient_evidence,
+            citation_ids=result.citation_ids,
+            latency_ms=result.latency_ms,
+        )
+        return QuestionTrace(
+            response=response,
+            retrieved_ids=tuple(item.chunk_id for item in traced),
+            retrieval_context=tuple(item.chunk.text for item in traced),
+            retrieval_scores=tuple(float(item.score) for item in traced),
         )
 
     def to_page_blocks(self, processed_document: ProcessedDocument) -> list[PageBlock]:
@@ -170,7 +274,128 @@ class DocumentOrchestrator:
             stitched_pages=stitched_pages,
         )
 
+    def _normalize_document(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        processed_document: ProcessedDocument,
+    ) -> NormalizedDocument:
+        chunks: list[DocumentChunk] = []
+        citations: dict[str, DomainCitation] = {}
+        for page in processed_document.stitched_pages:
+            paragraphs = [
+                paragraph.strip()
+                for paragraph in re.split(r"\n{2,}", page.content)
+                if paragraph.strip()
+            ]
+            if not paragraphs and page.content.strip():
+                paragraphs = [page.content.strip()]
+            for paragraph_number, paragraph in enumerate(paragraphs, start=1):
+                chunk_id = f"P{page.page_number}-D{paragraph_number}"
+                chunk = DocumentChunk(
+                    chunk_id=chunk_id,
+                    page=page.page_number,
+                    text=paragraph,
+                )
+                chunks.append(chunk)
+                citations[chunk_id] = DomainCitation(
+                    page=page.page_number,
+                    excerpt=self._shorten(paragraph, 240),
+                )
+        return NormalizedDocument(
+            document_id=document_id,
+            file_name=file_name,
+            page_count=processed_document.page_count,
+            chunks=chunks,
+            citations=citations,
+        )
+
     def _build_report(
+        self,
+        *,
+        document_id: str,
+        processed_document: ProcessedDocument,
+        normalized_document: NormalizedDocument,
+        file_name: str,
+    ) -> DocumentReport:
+        if self._call_llm is not None and normalized_document.chunks:
+            try:
+                intelligence = asyncio.run(
+                    build_intelligence(
+                        normalized_document,
+                        call_llm=self._call_llm,
+                    )
+                )
+                return self._build_llm_report(
+                    document_id=document_id,
+                    file_name=file_name,
+                    normalized_document=normalized_document,
+                    intelligence=intelligence,
+                )
+            except Exception:
+                # Availability-first fallback is explicit in the response and is
+                # rejected by release evaluation, so it cannot silently pass.
+                pass
+        return self._build_legacy_report(
+            document_id=document_id,
+            processed_document=processed_document,
+            file_name=file_name,
+        )
+
+    def _build_llm_report(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        normalized_document: NormalizedDocument,
+        intelligence: IntelligenceReport,
+    ) -> DocumentReport:
+        citations = {
+            item_id: Citation(**citation.model_dump())
+            for item_id, citation in normalized_document.citations.items()
+        }
+
+        def summary_items(items: list[Any]) -> list[SummaryItem]:
+            return [
+                SummaryItem(text=item.text, citation_ids=list(item.citation_ids))
+                for item in items
+            ]
+
+        return DocumentReport(
+            document_id=document_id,
+            file_name=file_name,
+            page_count=normalized_document.page_count,
+            processing_seconds=0.0,
+            summary=DocumentSummary(
+                context=summary_items(intelligence.summary.context),
+                main_content=summary_items(intelligence.summary.main_content),
+                decision_points=summary_items(intelligence.summary.decision_points),
+                impact=summary_items(intelligence.summary.impact),
+            ),
+            terms=[
+                TermItem(
+                    term=term.term,
+                    explanation=term.explanation,
+                    citation_ids=list(term.citation_ids),
+                )
+                for term in intelligence.terms
+            ],
+            suggested_questions=[
+                SuggestedQuestion(
+                    question=question.question,
+                    rationale=question.rationale,
+                    citation_ids=list(question.citation_ids),
+                )
+                for question in intelligence.suggested_questions
+            ],
+            related_documents=self._build_related_documents(citations),
+            citations=citations,
+            generation_mode="llm",
+            quality=intelligence.quality.model_dump(mode="json"),
+        )
+
+    def _build_legacy_report(
         self,
         *,
         document_id: str,
@@ -232,6 +457,8 @@ class DocumentOrchestrator:
             suggested_questions=suggested_questions,
             related_documents=self._build_related_documents(citation_map),
             citations=citation_map,
+            generation_mode="heuristic_fallback",
+            quality=None,
         )
 
     def _build_related_documents(self, citation_map: dict[str, Citation]) -> list[RelatedDocument]:

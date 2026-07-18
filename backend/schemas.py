@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -85,6 +85,8 @@ class DocumentReport(BaseModel):
     suggested_questions: list[SuggestedQuestion] = Field(default_factory=list)
     related_documents: list[RelatedDocument] = Field(default_factory=list)
     citations: dict[str, Citation] = Field(default_factory=dict)
+    generation_mode: Literal["llm", "heuristic_fallback"] = "heuristic_fallback"
+    quality: dict[str, Any] | None = None
 
 
 class QuestionRequest(BaseModel):

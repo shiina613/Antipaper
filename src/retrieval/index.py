@@ -6,7 +6,14 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from intelligence.contracts import DocumentChunk, NormalizedDocument, coerce_normalized_document
+try:
+    from intelligence.contracts import DocumentChunk, NormalizedDocument, coerce_normalized_document
+except ModuleNotFoundError:  # Package import via ``src.retrieval``.
+    from src.intelligence.contracts import (
+        DocumentChunk,
+        NormalizedDocument,
+        coerce_normalized_document,
+    )
 
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 

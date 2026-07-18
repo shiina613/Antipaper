@@ -92,7 +92,7 @@ async def document_report(document_id: str) -> DocumentReport:
 
 
 @app.post("/api/v1/documents/{document_id}/questions", response_model=QuestionResponse)
-async def document_question(
+def document_question(
     document_id: str,
     body: QuestionRequest,
 ) -> QuestionResponse:

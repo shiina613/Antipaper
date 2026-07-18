@@ -72,3 +72,16 @@ evidence/
 ```
 
 Deck chỉ được điền số liệu đã xuất hiện trong hồ sơ này.
+
+## 6. Gate tự động
+
+| Tầng | Lệnh | Phạm vi |
+|---|---|---|
+| PR/offline | `python -m pytest` | Schema, citation validity, adapter, cache rehydration và golden deterministic |
+| Smoke/offline | `python -m evals.run --suite smoke` | Recall@5 ≥0,80, citation precision ≥0,90, refusal 3/3, latency uncached <60 giây |
+| Nightly/release | `python -m evals.run --suite full` | Một cold và ba warm run; tất cả report phải có `generation_mode=llm` |
+| DeepEval | `deepeval test run evals/tests` | Retrieval, faithfulness, relevancy, correctness, summary, thuật ngữ và câu hỏi phản biện |
+
+Kết quả được ghi trong `evidence/benchmark.json` kèm commit, phiên bản
+dataset/prompt/parser, model generator/judge, máy chạy, latency, gate thất bại và
+trạng thái chi phí/token. Không dùng cache hit làm bằng chứng duy nhất.

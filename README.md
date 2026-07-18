@@ -8,8 +8,9 @@ Trợ lý AI giúp cán bộ đọc nhanh tài liệu họp dài, chuẩn bị c
 Kho mã nguồn đang ở mức khung kỹ thuật:
 
 - Đã có luồng PDF bằng PyMuPDF, Streamlit MVP và giao diện Next.js tĩnh.
-- Đã có xử lý mẫu cho tóm tắt, thuật ngữ, câu hỏi và Q&A cấp trang.
-- Chưa có LLM thật, DOCX, FastAPI, truy hồi ngữ nghĩa, citation cấp điều/mục và đo hiệu năng dưới 60 giây.
+- Đã có FastAPI job/cache, canonical document contract, grounded Q&A và citation cấp trang/mục/điều.
+- Report dùng LLM map-reduce khi cấu hình model; heuristic chỉ là fallback có gắn nhãn và không được qua release gate.
+- Đã có benchmark deterministic và DeepEval; semantic embedding và DOCX production vẫn là hạng mục tiếp theo.
 - Kho `data/` đã có nhiều PDF từ 40 trang; tài liệu demo được chọn qua `DEMO_DOCUMENT_PATH`, không phụ thuộc tên file.
 
 Xem trạng thái chi tiết tại [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGRESS.md).
@@ -43,8 +44,11 @@ Xem trạng thái chi tiết tại [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGR
 
 ```text
 Antipaper/
+├── backend/              # FastAPI, orchestration, artifact cache
 ├── data/                 # PDF mẫu công khai
 ├── docs/                 # Kiến trúc, kế hoạch, kiểm thử và task
+├── evals/                # Release dataset, adapters và DeepEval suite
+├── evidence/             # Kết quả benchmark có truy vết
 ├── frontend/             # Next.js dashboard
 ├── scripts/              # Script demo/benchmark
 ├── src/intelligence/     # Tóm tắt, thuật ngữ, câu hỏi, Q&A
@@ -107,6 +111,31 @@ Hoặc dùng script Windows:
 ```
 
 Bundle đầu ra mặc định nằm ở `.artifacts\antipaper-backend.zip`.
+
+## Chạy evaluation benchmark
+
+PR gate không gọi LLM judge và có thể chạy offline:
+
+```powershell
+python -m pytest
+python -m evals.run --suite smoke --output evidence/benchmark-smoke.json
+```
+
+Release gate dùng pipeline thật và DeepEval 4.1.0. Cần cấu hình
+`DEMO_DOCUMENT_PATH`, `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_API_KEY` và
+`EVAL_JUDGE_MODEL`; judge mặc định là `gpt-5.4`, temperature 0.
+
+```powershell
+python -m pip install -r requirements-eval.txt
+python -m evals.run --suite full --output evidence/benchmark.json
+$env:PYTHONIOENCODING="utf-8" # cần cho Rich/DeepEval trên Windows
+deepeval test run evals/tests
+```
+
+Dataset release ở `evals/datasets/demo_v1.jsonl`. Bộ deterministic tái sử dụng
+`src/retrieval/golden.py`; không có evaluator golden thứ hai. Chế độ
+`heuristic_fallback` chỉ giữ khả dụng runtime và không được phép qua release
+gate. Thời gian judge không được tính vào latency của pipeline.
 
 ## Logging an toàn
 

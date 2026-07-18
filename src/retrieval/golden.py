@@ -21,6 +21,9 @@ class GoldenCase:
     expected_answer_points: tuple[str, ...]
     gold_citation_ids: tuple[str, ...]
     expected_out_of_scope: bool
+    expected_output: str = ""
+    category: str = "general"
+    difficulty: str = "medium"
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "GoldenCase":
@@ -29,6 +32,9 @@ class GoldenCase:
             expected_answer_points=tuple(value["expected_answer_points"]),
             gold_citation_ids=tuple(value["gold_citation_ids"]),
             expected_out_of_scope=bool(value["expected_out_of_scope"]),
+            expected_output=str(value.get("expected_output", "")),
+            category=str(value.get("category", "general")),
+            difficulty=str(value.get("difficulty", "medium")),
         )
 
 
@@ -70,8 +76,19 @@ class GoldenEvaluation:
 
 
 def load_golden_cases(path: str | Path) -> list[GoldenCase]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    return [GoldenCase.from_dict(item) for item in payload]
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    if source.suffix.casefold() == ".jsonl":
+        payload = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        payload = json.loads(text)
+    if isinstance(payload, dict):
+        payload = payload.get("records", [])
+    return [
+        GoldenCase.from_dict(item)
+        for item in payload
+        if item.get("record_type", "qa") == "qa"
+    ]
 
 
 async def evaluate_case(index: RetrievalIndex, case: GoldenCase) -> CaseEvaluation:
