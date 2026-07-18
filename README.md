@@ -63,6 +63,23 @@ streamlit run app.py
 
 Baseline cần YOLO weights. Kiến trúc hackathon mới sẽ đưa YOLO ra khỏi luồng bắt buộc để ưu tiên tốc độ và độ ổn định.
 
+Trên Linux dùng file requirements riêng để tránh wheel Windows/CUDA:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-linux.txt
+python download_yolo_table_weights.py
+streamlit run app.py
+```
+
+Nếu dùng Ubuntu/Debian và cần `pdf2image`, cài thêm Poppler:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y poppler-utils
+```
+
 Frontend tĩnh:
 
 ```powershell

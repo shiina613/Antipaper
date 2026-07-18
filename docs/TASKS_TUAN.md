@@ -43,9 +43,19 @@ Module ingestion không gọi LLM và phải deterministic. LLM client nằm ở
 
 ## Checklist bàn giao
 
-- [ ] Tài liệu demo đủ số trang gốc và có page number đúng.
-- [ ] Parser nhận diện được Điều/Khoản phổ biến.
-- [ ] DOCX smoke test hoạt động.
-- [ ] Không cần YOLO weights ở luồng mặc định.
-- [ ] LLM client dùng chung xử lý timeout/retry/schema error.
-- [ ] Test và sample JSON được commit.
+- [x] Tài liệu demo đủ số trang gốc và có page number đúng.
+- [x] Parser nhận diện được Điều/Khoản phổ biến.
+- [x] DOCX smoke test hoạt động.
+- [x] Không cần YOLO weights ở luồng mặc định.
+- [x] LLM client dùng chung xử lý timeout/retry/schema error.
+- [x] Test và sample JSON được commit.
+
+## Cập nhật triển khai
+
+- `src/ingestion/document_ingestor.py` cung cấp `ingest_document(path, options) -> NormalizedDocument`.
+- PDF ingestion ưu tiên YOLOv8 table pipeline khi có `models/table_detect_yolov8.pt`; nếu không có weights thì fallback sang native PyMuPDF để CI/test vẫn deterministic.
+- DOCX ingestion dùng `python-docx` và trả cùng schema `NormalizedDocument`.
+- Citation ID dạng `P{page}-D{index}`; citation map luôn dùng chính `chunk_id` làm khóa.
+- Parser section hỗ trợ `Chương/CHUONG`, `Điều/DIEU`, `Khoản/KHOAN` và dòng đánh số `1.`.
+- `src/llm/client.py` cung cấp LLM client OpenAI-compatible, cấu hình bằng env, retry timeout và validate output theo Pydantic `response_model`.
+- Fixture thật từ `data/01.pdf` nằm tại `docs/fixtures/normalized_document.01.json`.

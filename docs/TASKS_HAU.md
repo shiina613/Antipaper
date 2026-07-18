@@ -55,10 +55,27 @@ def ocr_table(image_bytes: bytes) -> TableData: ...
 
 ## Checklist bàn giao
 
-- [ ] Summary đủ 4 phần bắt buộc.
-- [ ] ≥10 thuật ngữ đạt review.
-- [ ] ≥5 câu hỏi đạt 3/4 rubric.
-- [ ] Mọi item có citation ID hợp lệ.
-- [ ] Có timing từng LLM stage và pass rubric chất lượng.
-- [ ] OCR chỉ kích hoạt với trang/vùng thiếu text, giữ đúng dấu tiếng Việt.
-- [ ] Bảng ảnh mẫu giữ đúng hàng/cột và có `page`, `bbox`, confidence.
+- [x] Summary đủ 4 phần bắt buộc.
+- [x] ≥10 thuật ngữ trong fixture contract; Streamlit/backend dùng `build_local_intelligence_pack` trên tài liệu thật.
+- [x] ≥5 câu hỏi đạt 3/4 rubric trong fixture contract; đã surface trên Streamlit và API report.
+- [x] Mọi item có citation ID hợp lệ và citation giả bị loại fail-closed.
+- [x] Có timing từng LLM stage và quality rubric trong `IntelligenceReport`.
+- [ ] OCR production chỉ kích hoạt với trang/vùng thiếu text và giữ đúng dấu tiếng Việt bằng model thật.
+- [x] Bảng ảnh mẫu bằng model thật giữ đúng hàng/cột và có `page`, `bbox`, confidence.
+
+## Kiểm tra hiện tại
+
+- `tests/test_intelligence_contract.py`: pass `5/5`.
+- `tests/test_paddle_ocr.py`: pass `4/4` bằng fake backend, kiểm tra adapter, policy, Markdown/JSON, metadata và lỗi ảnh hỏng.
+- Tổng Hậu hiện đạt `6/7` checklist bàn giao.
+- `scripts/check_hau_tasks.py --use-existing-ocr-smoke` kiểm tra lại artifact hiện có.
+- Artifact OCR thật nằm tại `evidence/ocr_smoke/`: `table_crop.png`, `table.json`, `table.md`, `benchmark.json`.
+- GPU smoke trên máy hiện tại fail với `Unsupported GPU architecture`; CPU fallback chạy được cấu trúc bảng.
+- Điểm chưa đạt còn lại: OCR tiếng Việt có dấu chỉ đạt `4/12` exact cells (`33.3%`) với stock `latin_PP-OCRv5_mobile_rec`.
+
+## Phần còn cần làm
+
+1. Thay OCR recognition model bằng model hỗ trợ tiếng Việt đầy đủ hoặc OCR engine khác.
+2. Chạy lại `scripts/smoke_test_paddle_ocr.py --synthetic --device cpu --runs 1`.
+3. Mục tiêu nghiệm thu: `quality_passed=true`, exact Vietnamese cell ratio >= 0.8.
+4. Nếu cần GPU trên RTX 50-series, cần Paddle build hỗ trợ kiến trúc GPU hiện tại.

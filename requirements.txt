@@ -11,6 +11,16 @@ langchain>=0.1.0
 python-dotenv>=1.0.0
 huggingface_hub>=0.20.0
 pytest>=9.0.0
-httpx2>=2.7.0
+python-docx>=1.1.0
+httpx>=0.25.0
 
-
+# Reproducible GPU OCR runtime for Windows/CUDA 12.6.
+# Use Paddle 3.2.2/cu126 to keep cuDNN/cuBLAS dependency contracts consistent.
+paddlepaddle-gpu @ https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.2.2-cp311-cp311-win_amd64.whl ; platform_system == "Windows" and python_version == "3.11"
+paddlepaddle-gpu @ https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.2.2-cp312-cp312-win_amd64.whl ; platform_system == "Windows" and python_version == "3.12"
+paddleocr==3.4.1
+paddlex[ocr]==3.4.3
+# PaddleX imports ModelScope/Torch at startup. Newer resolver-selected Windows
+# wheels failed to load shm.dll on the validated machine.
+torch==2.7.1; platform_system == "Windows"
+torchvision==0.22.1; platform_system == "Windows"

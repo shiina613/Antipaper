@@ -63,5 +63,5 @@ python -m pytest tests/test_retrieval.py tests/test_citations.py tests/test_gold
 
 - Phụ thuộc upstream cung cấp `NormalizedDocument` và normalized chunks hợp lệ.
 - Không tạo client LLM/embedding, không gọi network.
-- Chưa tích hợp runtime FastAPI/API/UI.
-- TA-04 (trích căn cứ pháp lý/đối chiếu catalog) deferred.
+- Đã tích hợp Streamlit và FastAPI report/Q&A.
+- TA-04: `related.py` + catalog cục bộ `docs/fixtures/related_documents_catalog.json`.
