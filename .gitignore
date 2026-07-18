@@ -21,3 +21,6 @@ frontend/.vercel/
 uploads/
 .worktrees/
 .ini
+
+# Personal working plan
+/plan.md

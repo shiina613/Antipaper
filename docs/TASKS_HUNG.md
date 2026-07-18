@@ -12,10 +12,10 @@ Phụ trách nền chạy backend, API, điều phối, cache, xử lý bottlene
 
 | ID | Việc | Giờ | Hạn | Điều kiện hoàn thành |
 |---|---|---:|---|---|
-| HUNG-01 | FastAPI skeleton, CORS, models và error format | 4 | H8 | Endpoints đúng `API_CONTRACT.md`; OpenAPI chạy được |
-| HUNG-02 | Upload, job status, in-memory store và cache SHA-256 | 6 | H16 | Request không block; polling hoạt động; cache hit rõ ràng |
-| HUNG-03 | Orchestrate ingestion, intelligence, retrieval và report | 4 | H24 | Một API flow hoàn chỉnh chạy trên `$DEMO_DOCUMENT_PATH` |
-| HUNG-05 | Health, log an toàn, script run và đóng gói deploy | 4 | H38 | Team chạy backend bằng một lệnh; không log key/toàn văn |
+| [x] HUNG-01 | FastAPI skeleton, CORS, models và error format | 4 | H8 | Endpoints đúng `API_CONTRACT.md`; OpenAPI chạy được |
+| [x] HUNG-02 | Upload, job status, in-memory store và cache SHA-256 | 6 | H16 | Request không block; polling hoạt động; cache hit rõ ràng |
+| [x] HUNG-03 | Orchestrate ingestion, intelligence, retrieval và report | 4 | H24 | Một API flow hoàn chỉnh chạy trên `$DEMO_DOCUMENT_PATH` |
+| [x] HUNG-05 | Health, log an toàn, script run và đóng gói deploy | 4 | H38 | Team chạy backend bằng một lệnh; không log key/toàn văn |
 
 > `HUNG-04` (6 giờ) được chuyển sang `TUNG-06` để cân bằng tải. Tùng sở hữu benchmark và bằng chứng nghiệm thu; Hùng chịu trách nhiệm sửa các bottleneck backend được phát hiện.
 
@@ -42,8 +42,8 @@ Phụ trách nền chạy backend, API, điều phối, cache, xử lý bottlene
 
 ## Checklist bàn giao
 
-- [ ] API contract không bị phá vỡ.
-- [ ] Job failed/timeout trả lỗi rõ.
-- [ ] Cache theo content hash hoạt động.
-- [ ] Các bottleneck backend từ `TUNG-06` đã được xử lý hoặc ghi nhận rõ giới hạn.
-- [ ] Backend khởi động bằng một lệnh.
+- [x] API contract không bị phá vỡ.
+- [x] Job failed/timeout trả lỗi rõ.
+- [x] Cache theo content hash hoạt động.
+- [x] Các bottleneck backend từ `TUNG-06` đã được xử lý hoặc ghi nhận rõ giới hạn.
+- [x] Backend khởi động bằng một lệnh.
