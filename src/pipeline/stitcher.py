@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Literal, Sequence
 
 from .pdf_parser import ExtractedTextBlock, ParsedPage
-from .table_ocr import BoundingBox
+
+BoundingBox = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)

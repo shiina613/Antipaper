@@ -11,7 +11,6 @@ from typing import Iterable
 import fitz
 
 from intelligence import Citation, DocumentChunk, NormalizedDocument
-from pipeline.processor import PdfProcessingPipeline, ProcessedDocument
 from pipeline.stitcher import StitchedPage
 
 
@@ -117,6 +116,8 @@ class DocumentIngestor:
     def _load_pdf_pages(self, path: Path) -> list[StitchedPage]:
         if self.options.use_yolo_tables:
             if self.options.yolo_model_path.exists():
+                from pipeline.processor import PdfProcessingPipeline
+
                 processed = PdfProcessingPipeline(
                     model_path=self.options.yolo_model_path,
                     confidence_threshold=self.options.yolo_confidence,

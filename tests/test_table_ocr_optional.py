@@ -31,3 +31,26 @@ else:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_native_ingestion_import_does_not_require_vision_stack() -> None:
+    script = """
+import sys
+sys.modules["cv2"] = None
+sys.modules["PIL"] = None
+from ingestion import DocumentIngestor
+assert DocumentIngestor
+"""
+    environment = os.environ.copy()
+    root = Path(__file__).resolve().parents[1]
+    environment["PYTHONPATH"] = os.pathsep.join((str(root), str(root / "src")))
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr

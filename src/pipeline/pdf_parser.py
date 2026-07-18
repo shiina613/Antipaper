@@ -8,7 +8,7 @@ from typing import Sequence
 
 import fitz
 
-from .table_ocr import BoundingBox
+BoundingBox = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
