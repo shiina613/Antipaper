@@ -38,6 +38,8 @@ import {
   getDocumentReport,
   getDocumentPage,
   getDocumentStatus,
+  lockDocumentApiMode,
+  resetDocumentApiMode,
   mockReport,
   stageLabel,
   type CitationMeta,
@@ -58,6 +60,7 @@ const navItems: Array<{ key: ViewKey; label: string; icon: LucideIcon }> = [
 ];
 
 const initialStatus: StatusResponse = {
+  apiMode: "mock",
   document_id: mockReport.document_id,
   status: "completed",
   stage: "completed",
@@ -92,6 +95,7 @@ const initialMessages: ChatMessage[] = [
     latencyMs: 420,
   },
 ];
+const emptyMessages: ChatMessage[] = [];
 
 export default function Home() {
   const [view, setView] = useState<ViewKey>("upload");
@@ -102,26 +106,29 @@ export default function Home() {
   const [report, setReport] = useState<ReportResponse | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sessionTokenRef = useRef(0);
+  const citationRequestRef = useRef(0);
 
-  const activeReport = report ?? mockReport;
+  const activeReport = apiMode === "mock" ? report ?? mockReport : report;
   const [selectedCitationId, setSelectedCitationId] = useState<string>("P14-D2");
   const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
   const [isCitationLoading, setIsCitationLoading] = useState(false);
-  const selectedCitation = activeReport.citations[selectedCitationId] ?? null;
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const selectedCitation = activeReport?.citations[selectedCitationId] ?? null;
+  const [messages, setMessages] = useState<ChatMessage[]>(emptyMessages);
   const [question, setQuestion] = useState("");
   const [isAsking, setIsAsking] = useState(false);
-  const canAsk = documentStatus === "completed" && Boolean(report);
+  const canAsk = documentStatus === "completed" && Boolean(activeReport);
 
   const activeTitle = useMemo(() => {
     if (view === "upload") return "Tải tài liệu họp";
     if (view === "processing") return stageLabel(status.stage);
     if (view === "report") return "Tóm tắt điều hành";
-    return activeReport.file_name;
-  }, [activeReport.file_name, status.stage, view]);
+    return activeReport?.file_name ?? "Antipaper";
+  }, [activeReport?.file_name, status.stage, view]);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
@@ -142,27 +149,51 @@ export default function Home() {
       return;
     }
 
+    const sessionToken = ++sessionTokenRef.current;
+    citationRequestRef.current += 1;
+    setIsAsking(false);
+    setIsCitationLoading(false);
+    setMessages(emptyMessages);
+    setReport(null);
+    setSelectedPage(null);
+    setQuestion("");
     setIsUploading(true);
     setUploadError(null);
+    setAppError(null);
     setView("processing");
 
-    const upload = await uploadDocument(selectedFile);
-    setApiMode(upload.apiMode);
-    setDocumentId(upload.document_id);
-    setDocumentStatus(upload.status);
-    setStatus({
+    try {
+      const upload = await uploadDocument(selectedFile);
+      if (sessionToken !== sessionTokenRef.current) return;
+      lockDocumentApiMode(upload.apiMode);
+      setApiMode(upload.apiMode);
+      setDocumentId(upload.document_id);
+      setDocumentStatus(upload.status);
+      setStatus({
+      apiMode: upload.apiMode,
       document_id: upload.document_id,
       status: upload.status,
       stage: upload.status === "queued" ? "queued" : "extracting",
       progress: upload.status === "queued" ? 5 : 18,
       elapsed_seconds: 0,
       error: null,
-    });
-    setIsUploading(false);
-    setIsPolling(true);
+      });
+      setMessages(upload.apiMode === "mock" ? initialMessages : emptyMessages);
+      setIsPolling(true);
+    } catch (error) {
+      if (sessionToken === sessionTokenRef.current) {
+        setUploadError(error instanceof Error ? error.message : "Không thể tải tài liệu.");
+        setView("upload");
+        setIsPolling(false);
+      }
+    } finally {
+      if (sessionToken === sessionTokenRef.current) setIsUploading(false);
+    }
   }
 
   function resetUpload() {
+    sessionTokenRef.current += 1;
+    citationRequestRef.current += 1;
     setView("upload");
     setDocumentId(null);
     setReport(null);
@@ -170,21 +201,41 @@ export default function Home() {
     setStatus(initialStatus);
     setSelectedFile(null);
     setUploadError(null);
+    setAppError(null);
+    resetDocumentApiMode();
     setIsUploading(false);
     setIsPolling(false);
+    setIsAsking(false);
+    setIsCitationLoading(false);
+    setMessages(emptyMessages);
+    setSelectedCitationId("P14-D2");
+    setSelectedPage(null);
+    setQuestion("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function handleSelectCitation(citationId: string) {
-    const citation = activeReport.citations[citationId];
+    const citation = activeReport?.citations[citationId];
     if (!citation) return;
 
     setSelectedCitationId(citationId);
+    const requestToken = ++citationRequestRef.current;
+    const requestSessionToken = sessionTokenRef.current;
+    const requestDocumentId = activeReport!.document_id;
+    setSelectedPage(null);
     setIsCitationLoading(true);
-    const page = await getDocumentPage(activeReport.document_id, citation.page);
-    setApiMode(page.apiMode);
-    setSelectedPage(page);
-    setIsCitationLoading(false);
+    try {
+      const page = await getDocumentPage(requestDocumentId, citation.page);
+      if (requestToken !== citationRequestRef.current || requestSessionToken !== sessionTokenRef.current || requestDocumentId !== documentId) return;
+      setApiMode(page.apiMode);
+      setSelectedPage(page);
+    } catch (error) {
+      if (requestToken === citationRequestRef.current && requestSessionToken === sessionTokenRef.current) {
+        setAppError(error instanceof Error ? error.message : "Không thể tải trang nguồn.");
+      }
+    } finally {
+      if (requestToken === citationRequestRef.current && requestSessionToken === sessionTokenRef.current) setIsCitationLoading(false);
+    }
   }
 
   async function handleAskQuestion(event: FormEvent<HTMLFormElement>) {
@@ -194,14 +245,17 @@ export default function Home() {
 
     setQuestion("");
     setIsAsking(true);
+    const requestSessionToken = sessionTokenRef.current;
     setMessages((current) => [...current, { role: "user", text: trimmed }]);
 
-    const response: QuestionResponse & { apiMode: ApiMode } = await askDocumentQuestion(
-      activeReport.document_id,
-      trimmed,
-    );
-    setApiMode(response.apiMode);
-    setMessages((current) => [
+    try {
+      const response: QuestionResponse & { apiMode: ApiMode } = await askDocumentQuestion(
+        activeReport!.document_id,
+        trimmed,
+      );
+      if (requestSessionToken !== sessionTokenRef.current) return;
+      setApiMode(response.apiMode);
+      setMessages((current) => [
       ...current,
       {
         role: "assistant",
@@ -210,45 +264,84 @@ export default function Home() {
         citationIds: response.citation_ids,
         latencyMs: response.latency_ms,
       },
-    ]);
-    setIsAsking(false);
+      ]);
+    } catch (error) {
+      if (requestSessionToken === sessionTokenRef.current) {
+        setAppError(error instanceof Error ? error.message : "Không thể gửi câu hỏi.");
+      }
+    } finally {
+      if (requestSessionToken === sessionTokenRef.current) setIsAsking(false);
+    }
   }
 
   useEffect(() => {
     if (!documentId || !isPolling) return;
 
+    const sessionToken = sessionTokenRef.current;
     let cancelled = false;
+    let inFlight = false;
+    let timeout: number | null = null;
     const currentDocumentId = documentId;
 
     async function tick() {
-      const nextStatus = await getDocumentStatus(currentDocumentId);
-      if (cancelled) return;
+      if (cancelled || inFlight || sessionToken !== sessionTokenRef.current) return;
+      inFlight = true;
+      let nextStatus: StatusResponse;
+      try {
+        nextStatus = await getDocumentStatus(currentDocumentId);
+      } catch (error) {
+        if (!cancelled && sessionToken === sessionTokenRef.current) {
+          setAppError(error instanceof Error ? error.message : "Không thể lấy trạng thái tài liệu.");
+          setIsPolling(false);
+        }
+        inFlight = false;
+        return;
+      }
+      if (cancelled || sessionToken !== sessionTokenRef.current) {
+        inFlight = false;
+        return;
+      }
 
       setApiMode(nextStatus.apiMode);
       setStatus(nextStatus);
       setDocumentStatus(nextStatus.status);
 
       if (nextStatus.status === "completed") {
-        const nextReport = await getDocumentReport(currentDocumentId);
-        if (cancelled) return;
+        let nextReport: ReportResponse & { apiMode: ApiMode };
+        try {
+          nextReport = await getDocumentReport(currentDocumentId);
+        } catch (error) {
+          if (!cancelled && sessionToken === sessionTokenRef.current) {
+            setAppError(error instanceof Error ? error.message : "Không thể lấy báo cáo.");
+            setIsPolling(false);
+          }
+          inFlight = false;
+          return;
+        }
+        if (cancelled || sessionToken !== sessionTokenRef.current) {
+          inFlight = false;
+          return;
+        }
         setApiMode(nextReport.apiMode);
         setReport(nextReport);
         setView("qa");
         setIsPolling(false);
+        inFlight = false;
         return;
       }
 
       if (nextStatus.status === "failed") {
         setIsPolling(false);
       }
+      inFlight = false;
+      if (!cancelled && sessionToken === sessionTokenRef.current) timeout = window.setTimeout(tick, 1800);
     }
 
     tick();
-    const interval = window.setInterval(tick, 1800);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timeout !== null) window.clearTimeout(timeout);
     };
   }, [documentId, isPolling]);
 
@@ -260,10 +353,11 @@ export default function Home() {
           <TopBar
             title={activeTitle}
             apiMode={apiMode}
-            pageCount={activeReport.page_count}
+            pageCount={activeReport?.page_count ?? 0}
             status={documentStatus}
           />
           <div className="flex-1 overflow-auto px-4 py-6 sm:px-6">
+            {appError && <ErrorPanel message={appError} />}
             {view === "upload" && (
               <UploadWorkspace
                 fileInputRef={fileInputRef}
@@ -277,10 +371,11 @@ export default function Home() {
             {view === "processing" && (
               <ProcessingWorkspace status={status} apiMode={apiMode} onRetry={resetUpload} />
             )}
-            {view === "report" && (
+            {view === "report" && activeReport && (
               <ReportWorkspace report={activeReport} onSelectCitation={handleSelectCitation} />
             )}
-            {view === "qa" && (
+            {view === "report" && !activeReport && <ErrorPanel message="Backend chưa trả về báo cáo tài liệu." />}
+            {view === "qa" && activeReport && (
               <QaWorkspace
                 report={activeReport}
                 messages={messages}
@@ -292,6 +387,7 @@ export default function Home() {
                 onSelectCitation={handleSelectCitation}
               />
             )}
+            {view === "qa" && !activeReport && <ErrorPanel message="Chưa có báo cáo để hỏi đáp." />}
             <div className="mt-6 lg:hidden">
               <CitationViewer
                 report={activeReport}
@@ -369,6 +465,15 @@ function SideNav({
         </button>
       </div>
     </aside>
+  );
+}
+
+function ErrorPanel({ message }: { message: string }) {
+  return (
+    <div role="alert" className="mb-6 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <span>{message}</span>
+    </div>
   );
 }
 
@@ -661,7 +766,7 @@ function CitationViewer({
   page,
   isLoading,
 }: {
-  report: ReportResponse;
+  report: ReportResponse | null;
   citationId: string;
   citation: CitationMeta | null;
   page: PageResponse | null;
@@ -676,7 +781,9 @@ function CitationViewer({
         </div>
       </header>
       <div className="space-y-6 p-5">
-        {!citation ? (
+        {!report ? (
+          <p className="text-sm text-red-700">Chưa có báo cáo từ backend.</p>
+        ) : !citation ? (
           <p className="text-sm text-[#444748]">Chọn một citation để xem nguồn.</p>
         ) : (
           <>

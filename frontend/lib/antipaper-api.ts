@@ -1,4 +1,6 @@
 const API_BASE = "/api/v1";
+const MOCK_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_ENABLE_MOCK_FALLBACK === "true";
+let lockedApiMode: ApiMode | null = null;
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set([
   "application/pdf",
@@ -32,6 +34,7 @@ export type UploadResponse = {
 };
 
 export type StatusResponse = {
+  apiMode: ApiMode;
   document_id: string;
   status: DocumentStatus;
   stage: ProcessingStage;
@@ -96,11 +99,38 @@ export type PageResponse = {
   page_number: number;
   text: string;
   blocks?: Array<{
-    id: string;
+    kind: string;
     text: string;
-    citation_id?: string;
+    page_number: number;
   }>;
 };
+
+export function lockDocumentApiMode(mode: ApiMode): void {
+  lockedApiMode = mode;
+}
+
+export function resetDocumentApiMode(): void {
+  lockedApiMode = null;
+}
+
+function normalizeApiError(error: unknown): ApiErrorPayload["error"] | null {
+  if (!error) return null;
+  if (typeof error === "string") return { code: "BACKEND_ERROR", message: error, retryable: false };
+  if (typeof error === "object" && "message" in error) {
+    const value = error as Partial<ApiErrorPayload["error"]>;
+    return { code: value.code ?? "BACKEND_ERROR", message: value.message ?? "Backend error.", retryable: value.retryable ?? false };
+  }
+  return { code: "BACKEND_ERROR", message: "Backend error.", retryable: false };
+}
+
+export function normalizeStatus(value: StatusResponse): StatusResponse {
+  const stageMap: Record<string, ProcessingStage> = {
+    parsing: "extracting",
+    generating: "summarizing",
+    ready: "completed",
+  };
+  return { ...value, stage: stageMap[value.stage] ?? value.stage, error: normalizeApiError(value.error) };
+}
 
 export const mockDocumentId = "mock-antipaper-q3";
 
@@ -248,8 +278,8 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
   if (!response.ok) {
     let message = "Không thể kết nối backend.";
     try {
-      const payload = (await response.json()) as ApiErrorPayload;
-      message = payload.error?.message ?? message;
+      const payload = (await response.json()) as ApiErrorPayload | { error?: unknown };
+      message = normalizeApiError(payload.error)?.message ?? message;
     } catch {
       message = response.statusText || message;
     }
@@ -272,7 +302,8 @@ export async function uploadDocument(file: File): Promise<ApiResult<UploadRespon
       method: "POST",
       body: formData,
     });
-  } catch {
+  } catch (error) {
+    if (!MOCK_FALLBACK_ENABLED) throw error;
     return withMock({
       document_id: mockDocumentId,
       status: "processing",
@@ -283,8 +314,9 @@ export async function uploadDocument(file: File): Promise<ApiResult<UploadRespon
 
 export async function getDocumentStatus(documentId: string): Promise<ApiResult<StatusResponse>> {
   try {
-    return await fetchJson<StatusResponse>(`${API_BASE}/documents/${documentId}/status`);
-  } catch {
+    return { ...(normalizeStatus(await fetchJson<StatusResponse>(`${API_BASE}/documents/${documentId}/status`))), apiMode: "api" };
+  } catch (error) {
+    if (!MOCK_FALLBACK_ENABLED || lockedApiMode === "api") throw error;
     return withMock({
       document_id: mockDocumentId,
       status: "completed",
@@ -299,7 +331,8 @@ export async function getDocumentStatus(documentId: string): Promise<ApiResult<S
 export async function getDocumentReport(documentId: string): Promise<ApiResult<ReportResponse>> {
   try {
     return await fetchJson<ReportResponse>(`${API_BASE}/documents/${documentId}/report`);
-  } catch {
+  } catch (error) {
+    if (!MOCK_FALLBACK_ENABLED || lockedApiMode === "api") throw error;
     return withMock(mockReport);
   }
 }
@@ -314,7 +347,8 @@ export async function askDocumentQuestion(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),
     });
-  } catch {
+  } catch (error) {
+    if (!MOCK_FALLBACK_ENABLED || lockedApiMode === "api") throw error;
     const insufficient = question.toLowerCase().includes("không có trong tài liệu");
     return withMock({
       answer: insufficient
@@ -330,7 +364,8 @@ export async function askDocumentQuestion(
 export async function getDocumentPage(documentId: string, pageNumber: number): Promise<ApiResult<PageResponse>> {
   try {
     return await fetchJson<PageResponse>(`${API_BASE}/documents/${documentId}/pages/${pageNumber}`);
-  } catch {
+  } catch (error) {
+    if (!MOCK_FALLBACK_ENABLED || lockedApiMode === "api") throw error;
     const citation = Object.entries(mockReport.citations).find(([, item]) => item.page === pageNumber);
     return withMock({
       document_id: mockDocumentId,
@@ -341,9 +376,9 @@ export async function getDocumentPage(documentId: string, pageNumber: number): P
       blocks: citation
         ? [
             {
-              id: `${citation[0]}-block`,
               text: citation[1].excerpt,
-              citation_id: citation[0],
+              kind: "text",
+              page_number: pageNumber,
             },
           ]
         : [],

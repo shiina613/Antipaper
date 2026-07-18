@@ -18,6 +18,12 @@ npm ci
 npm run dev
 ```
 
+Copy `.env.local.example` to `.env.local` when needed. `BACKEND_URL` defaults
+to `http://127.0.0.1:8000`; Next proxies browser-relative `/api/*` requests to
+that backend. Set `NEXT_PUBLIC_ENABLE_MOCK_FALLBACK=true` only for explicit
+demo mode. Default `false` surfaces upload/status/report/page/Q&A errors and
+stops polling without silently substituting mock data.
+
 Mở `http://localhost:3000`.
 
 ## Kiểm tra
@@ -45,7 +51,7 @@ Các endpoint đang được dùng:
 - `POST /api/v1/documents/{document_id}/questions`
 - `GET /api/v1/documents/{document_id}/pages/{page_number}`
 
-Nếu backend chưa chạy hoặc API lỗi, adapter trong `lib/antipaper-api.ts` tự fallback sang dữ liệu mock đúng shape contract và UI hiển thị badge `Demo fallback`.
+Mock mode locks each uploaded document to one mode, preventing mixed API/mock state.
 
 ## Luồng chính
 
@@ -65,7 +71,7 @@ Nếu backend chưa chạy hoặc API lỗi, adapter trong `lib/antipaper-api.ts
 
 ## Ghi chú phát triển
 
-- Không cần env var cho mock mode; fallback tự động khi API không sẵn sàng.
+- Mock mode requires `NEXT_PUBLIC_ENABLE_MOCK_FALLBACK=true`.
 - File upload chỉ nhận PDF/DOCX, tối đa 25 MB theo API contract.
 - Q&A không render citation giả khi backend trả `insufficient_evidence=true`.
 - Citation ID phải tồn tại trong `report.citations` mới được hiển thị.

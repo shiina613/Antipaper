@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
 
 import uvicorn
 
 from .logging import configure_logging
+
+
+def _ensure_src_on_path() -> None:
+    """Make ``python -m backend`` work without caller-managed PYTHONPATH."""
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    _ensure_src_on_path()
     args = build_parser().parse_args()
     configure_logging()
     uvicorn.run(
