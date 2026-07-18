@@ -1,0 +1,46 @@
+BÀI TOÁN: TRỢ LÝ AI CHUẨN BỊ HỌP CẤP TỈNH
+
+1. Bối cảnh
+
+- Tài liệu họp thường dài 40–60 trang, chứa nhiều thuật ngữ pháp lý, hành chính và kỹ thuật.
+- Cán bộ thường nhận tài liệu trước cuộc họp khoảng một ngày nên không đủ thời gian đọc kỹ.
+- Cuộc họp kéo dài vì phải giải thích lại tài liệu; câu hỏi phản biện và phương án quyết định chưa được chuẩn bị.
+
+2. Người dùng chính
+
+- Lãnh đạo, cán bộ tham mưu và thư ký cuộc họp tại UBND cấp tỉnh.
+- Nhu cầu cốt lõi: hiểu nhanh, kiểm chứng được nguồn và tra cứu ngay trong cuộc họp.
+
+3. Sản phẩm cần xây dựng
+
+Người dùng tải PDF/DOCX lên và nhận được:
+
+- Tóm tắt có cấu trúc: bối cảnh, nội dung chính, điểm cần quyết định và tác động.
+- Ít nhất 10 thuật ngữ/điều khoản quan trọng, giải thích ngắn theo ngữ cảnh và có nguồn.
+- Ít nhất 5 câu hỏi phản biện phù hợp với chính tài liệu.
+- Danh sách văn bản/quy định liên quan, ưu tiên căn cứ được nhắc trong tài liệu.
+- Hỏi đáp tiếng Việt; câu trả lời phải dẫn đúng trang và mục/điều. Không đủ bằng chứng thì từ chối trả lời.
+
+4. Tiêu chí bắt buộc
+
+- Dùng tài liệu công khai thật từ 40 trang trở lên.
+- Từ lúc nhận file đến khi có tóm tắt hoàn chỉnh dưới 60 giây.
+- Tối thiểu 10 thuật ngữ được giải thích đúng.
+- Tối thiểu 5 câu hỏi phản biện có chất lượng.
+- Q&A dẫn đúng trang và mục/điều.
+- Có tài liệu kiến trúc và one-page deck, gồm nguồn dữ liệu và lộ trình triển khai tại UBND.
+
+5. Tiêu chí chất lượng nội bộ
+
+- Mọi nhận định quan trọng đều có citation hợp lệ.
+- Citation chỉ được tạo từ metadata trích xuất, không cho LLM tự đặt số trang/điều.
+- Không dùng kiến thức ngoài tài liệu để trả lời nếu không ghi rõ đó là tài liệu tham khảo.
+- Không đưa tài liệu nội bộ lên dịch vụ công cộng khi chưa được phê duyệt.
+
+6. Phạm vi hackathon 48 giờ
+
+Phải có: PDF native, DOCX cơ bản, tóm tắt, thuật ngữ, câu hỏi, văn bản liên quan, Q&A, citation, giao diện và đo hiệu năng.
+
+Làm sau nếu còn thời gian: OCR cho PDF scan, nhận dạng bảng bằng mô hình thị giác, đăng nhập, phân quyền và tìm kiếm toàn kho văn bản.
+
+Không làm trong 48 giờ: huấn luyện mô hình riêng, workflow phê duyệt nhiều cấp, hạ tầng phân tán và tích hợp hệ thống văn thư thật.
