@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 import time
+from tempfile import SpooledTemporaryFile
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from .errors import register_error_handlers
+from .errors import ApiError, register_error_handlers
 from .logging import configure_logging, get_logger
 from .schemas import (
     DocumentReport,
@@ -21,6 +22,8 @@ from .schemas import (
 )
 from .service import AntipaperService
 from . import __version__
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
 app = FastAPI(
@@ -106,36 +109,122 @@ async def _extract_upload(request: Request) -> tuple[str, bytes]:
 
     content_type = request.headers.get("content-type", "")
     if not content_type.startswith("multipart/form-data"):
-        return "uploaded-file", await request.body()
+        return "uploaded-file", await _read_stream_body(request)
 
     boundary_match = re.search(r"boundary=([^;]+)", content_type)
     if boundary_match is None:
-        return "uploaded-file", await request.body()
+        return "uploaded-file", await _read_stream_body(request)
 
     boundary = boundary_match.group(1).strip().strip('"')
-    body = await request.body()
+    return await _read_multipart_file(request, boundary)
+
+
+async def _read_stream_body(request: Request) -> bytes:
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+async def _read_multipart_file(request: Request, boundary: str) -> tuple[str, bytes]:
     delimiter = f"--{boundary}".encode()
-    parts = body.split(delimiter)
+    header_terminator = b"\r\n\r\n"
+    closing_delimiter = b"\r\n" + delimiter + b"--"
+    next_part_delimiter = b"\r\n" + delimiter
+    max_buffer = max(len(delimiter), len(closing_delimiter), len(next_part_delimiter)) + 8
 
-    for raw_part in parts:
-        part = raw_part.strip()
-        if not part or part == b"--":
+    buffer = bytearray()
+    file_name = "uploaded-file"
+    seen_headers = False
+    file_stream = SpooledTemporaryFile(max_size=1_048_576)
+    file_size = 0
+
+    async for chunk in request.stream():
+        buffer.extend(chunk)
+
+        if not seen_headers:
+            boundary_index = buffer.find(delimiter)
+            if boundary_index < 0:
+                if len(buffer) > max_buffer:
+                    del buffer[:-max_buffer]
+                continue
+
+            header_start = boundary_index + len(delimiter)
+            if buffer[header_start:header_start + 2] == b"\r\n":
+                header_start += 2
+
+            header_end = buffer.find(header_terminator, header_start)
+            if header_end < 0:
+                continue
+
+            header_blob = buffer[header_start:header_end].decode("utf-8", errors="ignore")
+            headers = _parse_headers(header_blob)
+            disposition = headers.get("content-disposition", "")
+            if 'name="file"' not in disposition:
+                buffer.clear()
+                continue
+
+            file_name = _parse_filename(disposition) or "uploaded-file"
+            seen_headers = True
+            del buffer[: header_end + len(header_terminator)]
+
+        if not seen_headers:
             continue
 
-        header_blob, separator, content = part.partition(b"\r\n\r\n")
-        if not separator:
-            continue
+        boundary_index = buffer.find(next_part_delimiter)
+        closing_index = buffer.find(closing_delimiter)
+        split_index = -1
+        if closing_index >= 0 and (boundary_index < 0 or closing_index < boundary_index):
+            split_index = closing_index
+        elif boundary_index >= 0:
+            split_index = boundary_index
 
-        headers = _parse_headers(header_blob.decode("utf-8", errors="ignore"))
-        disposition = headers.get("content-disposition", "")
-        if 'name="file"' not in disposition:
-            continue
+        if split_index >= 0:
+            file_bytes = bytes(buffer[:split_index].rstrip(b"\r\n"))
+            file_stream.write(file_bytes)
+            file_size += len(file_bytes)
+            if file_size > MAX_UPLOAD_BYTES:
+                file_stream.close()
+                raise ApiError(
+                    code="FILE_TOO_LARGE",
+                    message="File too large. Maximum size is 25 MB.",
+                    status_code=413,
+                    retryable=False,
+                )
+            file_stream.seek(0)
+            return file_name, file_stream.read()
 
-        file_name = _parse_filename(disposition) or "uploaded-file"
-        file_bytes = content.rstrip(b"\r\n")
-        return file_name, file_bytes
+        safe_write_upto = max(0, len(buffer) - max_buffer)
+        if safe_write_upto > 0:
+            file_chunk = bytes(buffer[:safe_write_upto])
+            file_stream.write(file_chunk)
+            file_size += len(file_chunk)
+            if file_size > MAX_UPLOAD_BYTES:
+                file_stream.close()
+                raise ApiError(
+                    code="FILE_TOO_LARGE",
+                    message="File too large. Maximum size is 25 MB.",
+                    status_code=413,
+                    retryable=False,
+                )
+            del buffer[:safe_write_upto]
 
-    return "uploaded-file", body
+    if seen_headers:
+        file_chunk = bytes(buffer.rstrip(b"\r\n"))
+        file_stream.write(file_chunk)
+        file_size += len(file_chunk)
+        if file_size > MAX_UPLOAD_BYTES:
+            file_stream.close()
+            raise ApiError(
+                code="FILE_TOO_LARGE",
+                message="File too large. Maximum size is 25 MB.",
+                status_code=413,
+                retryable=False,
+            )
+        file_stream.seek(0)
+        return file_name, file_stream.read()
+
+    return "uploaded-file", bytes(buffer)
 
 
 def _parse_headers(header_text: str) -> dict[str, str]:
