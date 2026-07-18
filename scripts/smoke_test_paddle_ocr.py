@@ -206,6 +206,7 @@ def main() -> int:
     parser.add_argument("--scan-only", action="store_true")
     parser.add_argument("--render-only", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--runs", type=int, default=1)
     args = parser.parse_args()
 
     if args.synthetic:
@@ -253,13 +254,19 @@ def main() -> int:
     ):
         raise RuntimeError("GPU smoke test requested but Paddle cannot access a CUDA GPU")
 
-    started = perf_counter()
-    table = PaddleOcrAdapter(PaddleOcrBackend(device=args.device)).ocr_table(
-        image_bytes,
-        page=page_number,
-        bbox=bbox,
-    )
-    elapsed_seconds = perf_counter() - started
+    adapter = PaddleOcrAdapter(PaddleOcrBackend(device=args.device))
+    run_timings: list[float] = []
+    table = None
+    for _ in range(max(args.runs, 1)):
+        started = perf_counter()
+        table = adapter.ocr_table(
+            image_bytes,
+            page=page_number,
+            bbox=bbox,
+        )
+        run_timings.append(perf_counter() - started)
+    assert table is not None
+    elapsed_seconds = sum(run_timings)
     structure_match = (
         table.row_count == expected_rows
         and table.column_count == expected_columns
@@ -268,11 +275,16 @@ def main() -> int:
     table_payload = table.model_dump(mode="json")
     write_json(output_dir / "table.json", table_payload)
     (output_dir / "table.md").write_text(table.markdown, encoding="utf-8")
+    text_quality = score_text_quality(table_payload, candidate_payload)
+    quality_passed = structure_match and (
+        text_quality is None or text_quality["exact_match_ratio"] >= 0.8
+    )
     benchmark = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "source": candidate_payload,
         "runtime": package_versions(args.device),
         "elapsed_seconds": elapsed_seconds,
+        "run_timings_seconds": run_timings,
         "recognized": {
             "row_count": table.row_count,
             "column_count": table.column_count,
@@ -280,6 +292,8 @@ def main() -> int:
             "confidence": table.confidence,
         },
         "row_column_match": structure_match,
+        "text_quality": text_quality,
+        "quality_passed": quality_passed,
         "artifacts": {
             "crop": "table_crop.png",
             "json": "table.json",
@@ -288,7 +302,49 @@ def main() -> int:
     }
     write_json(output_dir / "benchmark.json", benchmark)
     print(json.dumps(benchmark, ensure_ascii=False, indent=2))
-    return 0 if structure_match else 2
+    return 0 if quality_passed else 2
+
+
+def score_text_quality(
+    table_payload: dict[str, Any],
+    candidate_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    expected_cells = candidate_payload.get("expected_cells")
+    if not expected_cells:
+        return None
+
+    expected_by_position = {
+        (row_index, column_index): str(text).strip()
+        for row_index, row in enumerate(expected_cells)
+        for column_index, text in enumerate(row)
+    }
+    recognized_by_position = {
+        (cell["row"], cell["column"]): str(cell.get("text", "")).strip()
+        for cell in table_payload.get("cells", [])
+    }
+    comparisons = []
+    exact_matches = 0
+    for position, expected_text in expected_by_position.items():
+        recognized_text = recognized_by_position.get(position, "")
+        exact_match = recognized_text == expected_text
+        exact_matches += int(exact_match)
+        comparisons.append(
+            {
+                "row": position[0],
+                "column": position[1],
+                "expected": expected_text,
+                "recognized": recognized_text,
+                "exact_match": exact_match,
+            }
+        )
+
+    total = max(len(expected_by_position), 1)
+    return {
+        "exact_matches": exact_matches,
+        "total_cells": total,
+        "exact_match_ratio": exact_matches / total,
+        "comparisons": comparisons,
+    }
 
 
 if __name__ == "__main__":

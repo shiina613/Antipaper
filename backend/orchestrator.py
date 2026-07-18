@@ -2,19 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 import hashlib
 from io import BytesIO
+from pathlib import Path
 import re
+import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 
 import fitz
 
 try:
-    from intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
+    from ingestion import IngestionOptions, ingest_document
+    from intelligence import (
+        MeetingIntelligenceEngine,
+        MeetingIntelligenceReport,
+        NormalizedDocument,
+        build_local_intelligence_pack,
+    )
+    from intelligence.contracts import Citation as ContractCitation
+    from intelligence.contracts import DocumentChunk
+    from retrieval import GroundedQAService, build_index, extract_related_documents
+    from summary import DocumentSummaryEngine
 except ModuleNotFoundError:  # Running backend from repo root without pytest PYTHONPATH.
-    from src.intelligence import GroundedAnswer, MeetingIntelligenceEngine, MeetingIntelligenceReport
+    from src.ingestion import IngestionOptions, ingest_document
+    from src.intelligence import (
+        MeetingIntelligenceEngine,
+        MeetingIntelligenceReport,
+        NormalizedDocument,
+        build_local_intelligence_pack,
+    )
+    from src.intelligence.contracts import Citation as ContractCitation
+    from src.intelligence.contracts import DocumentChunk
+    from src.retrieval import GroundedQAService, build_index, extract_related_documents
+    from src.summary import DocumentSummaryEngine
 
 from .schemas import (
     Citation,
@@ -44,8 +67,11 @@ class ProcessedDocument:
     source_name: str
     page_count: int
     stitched_pages: list[StitchedPage]
-    chunks: list["_Chunk"] = field(default_factory=list, repr=False, compare=False)
+    chunks: list = field(default_factory=list, repr=False, compare=False)
     processing_seconds: float = 0.0
+    normalized_document: NormalizedDocument | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def full_text(self) -> str:
@@ -67,9 +93,16 @@ class DocumentOrchestrator:
 
     def __init__(self) -> None:
         self._engine = MeetingIntelligenceEngine()
+        self._summary_engine = DocumentSummaryEngine()
 
     def process(self, *, document_id: str, file_name: str, file_bytes: bytes) -> OrchestrationResult:
         processed_document = self._load_document(file_name=file_name, file_bytes=file_bytes)
+        if processed_document.normalized_document is None:
+            processed_document.normalized_document = self._normalized_from_pages(
+                document_id=document_id,
+                file_name=file_name,
+                processed_document=processed_document,
+            )
         if not processed_document.chunks:
             processed_document.chunks = self._engine.extract_chunks(processed_document)
 
@@ -81,25 +114,40 @@ class DocumentOrchestrator:
         return OrchestrationResult(processed_document=processed_document, report=report)
 
     def answer_question(self, processed_document: ProcessedDocument, question: str) -> QuestionResponse:
-        answer: GroundedAnswer = self._engine.answer_question_from_document(
-            document=processed_document,
-            question=question,
-        )
-        if not answer.citations:
-            return QuestionResponse(
-                answer=answer.answer,
-                insufficient_evidence=True,
-                citation_ids=[],
-                latency_ms=0.0,
+        normalized = processed_document.normalized_document
+        if normalized is None:
+            normalized = self._normalized_from_pages(
+                document_id="runtime",
+                file_name=processed_document.source_name,
+                processed_document=processed_document,
             )
+            processed_document.normalized_document = normalized
 
-        citation_ids = self._question_citations_to_ids(answer.citations, processed_document.page_count)
+        answer = self._run_async(GroundedQAService(build_index(normalized)).answer(question))
         return QuestionResponse(
             answer=answer.answer,
-            insufficient_evidence=False,
-            citation_ids=citation_ids,
-            latency_ms=0.0,
+            insufficient_evidence=bool(
+                getattr(answer, "insufficient_evidence", False)
+                or getattr(answer, "out_of_scope", False)
+                or not answer.citation_ids
+            ),
+            citation_ids=list(answer.citation_ids or []),
+            latency_ms=float(getattr(answer, "latency_ms", 0.0) or 0.0),
         )
+
+    @staticmethod
+    def _run_async(awaitable):
+        """Run a coroutine from sync code, including inside FastAPI's event loop."""
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, awaitable).result()
 
     def to_page_blocks(self, processed_document: ProcessedDocument) -> list[PageBlock]:
         return [
@@ -109,11 +157,57 @@ class DocumentOrchestrator:
 
     def _load_document(self, *, file_name: str, file_bytes: bytes) -> ProcessedDocument:
         suffix = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        ingested = self._try_ingest_normalized(file_name=file_name, file_bytes=file_bytes, suffix=suffix)
+        if ingested is not None:
+            return ingested
         if suffix == ".pdf":
             return self._load_pdf_document(file_name=file_name, file_bytes=file_bytes)
         if suffix == ".docx":
             return self._load_docx_document(file_name=file_name, file_bytes=file_bytes)
         raise ValueError(f"Unsupported file type: {suffix or file_name}")
+
+    def _try_ingest_normalized(
+        self,
+        *,
+        file_name: str,
+        file_bytes: bytes,
+        suffix: str,
+    ) -> ProcessedDocument | None:
+        if suffix not in {".pdf", ".docx"}:
+            return None
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                handle.write(file_bytes)
+                temp_path = Path(handle.name)
+            normalized = ingest_document(
+                temp_path,
+                IngestionOptions(use_yolo_tables=False, require_yolo_weights=False),
+            )
+            if not normalized.chunks:
+                return None
+            pages_by_number: dict[int, list[str]] = {}
+            for chunk in normalized.chunks:
+                pages_by_number.setdefault(chunk.page, []).append(chunk.text)
+            stitched_pages = [
+                StitchedPage(page_number=page, content="\n\n".join(parts).strip())
+                for page, parts in sorted(pages_by_number.items())
+            ]
+            if not stitched_pages:
+                stitched_pages = [StitchedPage(page_number=1, content="")]
+            return ProcessedDocument(
+                source_name=file_name,
+                page_count=normalized.page_count,
+                stitched_pages=stitched_pages,
+                normalized_document=normalized.model_copy(
+                    update={"document_id": normalized.document_id, "file_name": file_name}
+                ),
+            )
+        except Exception:
+            return None
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     def _load_pdf_document(self, *, file_name: str, file_bytes: bytes) -> ProcessedDocument:
         try:
@@ -177,6 +271,103 @@ class DocumentOrchestrator:
         processed_document: ProcessedDocument,
         file_name: str,
     ) -> DocumentReport:
+        normalized = processed_document.normalized_document
+        if normalized is not None and normalized.chunks:
+            return self._build_report_from_normalized(
+                document_id=document_id,
+                file_name=file_name,
+                processed_document=processed_document,
+                normalized=normalized,
+            )
+        return self._build_report_legacy(
+            document_id=document_id,
+            file_name=file_name,
+            processed_document=processed_document,
+        )
+
+    def _build_report_from_normalized(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        processed_document: ProcessedDocument,
+        normalized: NormalizedDocument,
+    ) -> DocumentReport:
+        summary_model = self._summary_engine.build(normalized)
+        pack = build_local_intelligence_pack(normalized)
+        related_hits = extract_related_documents(normalized)
+        citation_map = {
+            chunk_id: Citation(
+                page=citation.page,
+                chapter=citation.chapter,
+                article=citation.article,
+                clause=citation.clause,
+                excerpt=citation.excerpt,
+            )
+            for chunk_id, citation in normalized.citations.items()
+        }
+        if not citation_map:
+            citation_map = self._build_citation_map(processed_document)
+
+        return DocumentReport(
+            document_id=document_id,
+            file_name=file_name,
+            page_count=processed_document.page_count,
+            processing_seconds=processed_document.processing_seconds,
+            summary=DocumentSummary(
+                context=[
+                    SummaryItem(text=item.text, citation_ids=item.citation_ids)
+                    for item in summary_model.context
+                ],
+                main_content=[
+                    SummaryItem(text=item.text, citation_ids=item.citation_ids)
+                    for item in summary_model.main_content
+                ],
+                decision_points=[
+                    SummaryItem(text=item.text, citation_ids=item.citation_ids)
+                    for item in summary_model.decision_points
+                ],
+                impact=[
+                    SummaryItem(text=item.text, citation_ids=item.citation_ids)
+                    for item in summary_model.impact
+                ],
+            ),
+            terms=[
+                TermItem(
+                    term=term.term,
+                    explanation=term.explanation,
+                    citation_ids=term.citation_ids,
+                )
+                for term in pack.terms
+            ],
+            suggested_questions=[
+                SuggestedQuestion(
+                    question=question.question,
+                    rationale=question.rationale,
+                    citation_ids=question.citation_ids,
+                )
+                for question in pack.suggested_questions
+            ],
+            related_documents=[
+                RelatedDocument(
+                    title=item.title,
+                    document_number=item.document_number,
+                    source=item.source,
+                    reason=item.reason,
+                    citation_ids=item.citation_ids,
+                )
+                for item in related_hits
+            ],
+            citations=citation_map,
+        )
+
+    def _build_report_legacy(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        processed_document: ProcessedDocument,
+    ) -> DocumentReport:
         intelligence: MeetingIntelligenceReport = self._engine.build_report(
             document=processed_document,
             sample_question=_DEFAULT_SAMPLE_QUESTION,
@@ -222,6 +413,22 @@ class DocumentOrchestrator:
             for question in intelligence.questions
         ]
 
+        normalized = processed_document.normalized_document
+        related_documents = (
+            [
+                RelatedDocument(
+                    title=item.title,
+                    document_number=item.document_number,
+                    source=item.source,
+                    reason=item.reason,
+                    citation_ids=item.citation_ids,
+                )
+                for item in extract_related_documents(normalized)
+            ]
+            if normalized is not None
+            else self._build_related_documents_fallback(citation_map)
+        )
+
         return DocumentReport(
             document_id=document_id,
             file_name=file_name,
@@ -230,11 +437,11 @@ class DocumentOrchestrator:
             summary=summary,
             terms=terms,
             suggested_questions=suggested_questions,
-            related_documents=self._build_related_documents(citation_map),
+            related_documents=related_documents,
             citations=citation_map,
         )
 
-    def _build_related_documents(self, citation_map: dict[str, Citation]) -> list[RelatedDocument]:
+    def _build_related_documents_fallback(self, citation_map: dict[str, Citation]) -> list[RelatedDocument]:
         if not citation_map:
             return []
         first_id = next(iter(citation_map))
@@ -247,6 +454,37 @@ class DocumentOrchestrator:
                 citation_ids=[first_id],
             )
         ]
+
+    def _normalized_from_pages(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        processed_document: ProcessedDocument,
+    ) -> NormalizedDocument:
+        chunks: list[DocumentChunk] = []
+        citations: dict[str, ContractCitation] = {}
+        for page in processed_document.stitched_pages:
+            text = page.content.strip() or f"Trang {page.page_number} không có nội dung text."
+            chunk_id = self._citation_id_for_page(page.page_number)
+            chunks.append(
+                DocumentChunk(
+                    chunk_id=chunk_id,
+                    page=page.page_number,
+                    text=text,
+                )
+            )
+            citations[chunk_id] = ContractCitation(
+                page=page.page_number,
+                excerpt=self._shorten(text, 220),
+            )
+        return NormalizedDocument(
+            document_id=document_id[:16] if len(document_id) > 16 else document_id,
+            file_name=file_name or processed_document.source_name,
+            page_count=max(processed_document.page_count, 1),
+            chunks=chunks,
+            citations=citations,
+        )
 
     def _build_citation_map(self, processed_document: ProcessedDocument) -> dict[str, Citation]:
         citation_map: dict[str, Citation] = {}
@@ -290,15 +528,6 @@ class DocumentOrchestrator:
             if match:
                 pages.append(int(match.group(1)))
         return pages
-
-    def _question_citations_to_ids(self, citations: list[str], page_count: int) -> list[str]:
-        pages = self._pages_from_labels(citations)
-        if not pages:
-            pages = [1]
-        pages = [page for page in pages if 1 <= page <= page_count]
-        if not pages:
-            pages = [1]
-        return [self._citation_id_for_page(page) for page in pages]
 
     def _extract_docx_paragraphs(self, file_bytes: bytes) -> list[str]:
         paragraphs: list[str] = []

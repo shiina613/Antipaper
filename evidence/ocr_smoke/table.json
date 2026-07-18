@@ -1,0 +1,123 @@
+{
+  "cells": [
+    {
+      "row": 0,
+      "column": 0,
+      "text": "Hng mc",
+      "confidence": null,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 0,
+      "column": 1,
+      "text": "Đon v ph trách",
+      "confidence": 0.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 0,
+      "column": 2,
+      "text": "Tin đ",
+      "confidence": null,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 1,
+      "column": 0,
+      "text": "Kinh phí",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 1,
+      "column": 1,
+      "text": "S Tài chính",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 1,
+      "column": 2,
+      "text": "Quý III",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 2,
+      "column": 0,
+      "text": "H tàng",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 2,
+      "column": 1,
+      "text": "S Thông tin và Truyn thông",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 2,
+      "column": 2,
+      "text": "Quý IV",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 3,
+      "column": 0,
+      "text": "Đào to",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 3,
+      "column": 1,
+      "text": "y ban nhân dân huyn",
+      "confidence": 1.0,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    },
+    {
+      "row": 3,
+      "column": 2,
+      "text": "Tháng 12",
+      "confidence": null,
+      "rowspan": 1,
+      "colspan": 1,
+      "bbox": null
+    }
+  ],
+  "row_count": 4,
+  "column_count": 3,
+  "markdown": "| Hng mc | Đon v ph trách | Tin đ |\n| --- | --- | --- |\n| Kinh phí | S Tài chính | Quý III |\n| H tàng | S Thông tin và Truyn thông | Quý IV |\n| Đào to | y ban nhân dân huyn | Tháng 12 |",
+  "page": 1,
+  "bbox": [
+    0.0,
+    0.0,
+    1148.0,
+    468.0
+  ],
+  "confidence": 0.8888888888888888
+}
