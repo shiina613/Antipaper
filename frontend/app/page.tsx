@@ -1,305 +1,811 @@
+"use client";
+
+import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
-  BookOpenCheck,
+  BookOpenText,
   CheckCircle2,
+  CircleHelp,
   Clock3,
-  FileSearch,
+  ExternalLink,
   FileText,
-  HelpCircle,
+  FileUp,
+  LoaderCircle,
+  Copy,
   MessageSquareText,
-  UploadCloud,
+  Plus,
+  Quote,
+  RefreshCcw,
+  SearchCheck,
+  SendHorizontal,
+  Settings,
+  ThumbsDown,
+  ThumbsUp,
+  Upload,
 } from "lucide-react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  type ApiMode,
+  type DocumentStatus,
+  type ProcessingStage,
+  type ReportResponse,
+  type StatusResponse,
+  askDocumentQuestion,
+  citationLabel,
+  getDocumentReport,
+  getDocumentPage,
+  getDocumentStatus,
+  mockReport,
+  stageLabel,
+  type CitationMeta,
+  type PageResponse,
+  type QuestionResponse,
+  uploadDocument,
+  validateDocumentFile,
+} from "@/lib/antipaper-api";
+import { cn } from "@/lib/utils";
 
-const stats = [
-  { label: "Tài liệu test", value: "01.pdf", detail: "4 trang", icon: FileText },
-  { label: "Thời gian xử lý", value: "1.01s", detail: "MVP smoke test", icon: Clock3 },
-  { label: "Bảng phát hiện", value: "2", detail: "YOLOv8 table detector", icon: FileSearch },
-  { label: "Nội dung trích xuất", value: "5,762", detail: "ký tự đã stitch", icon: BookOpenCheck },
+type ViewKey = "upload" | "processing" | "report" | "qa";
+
+const navItems: Array<{ key: ViewKey; label: string; icon: LucideIcon }> = [
+  { key: "upload", label: "Tải lên", icon: Upload },
+  { key: "processing", label: "Trích xuất", icon: SearchCheck },
+  { key: "report", label: "Tóm tắt", icon: BookOpenText },
+  { key: "qa", label: "Citation", icon: Quote },
 ];
 
-const summary = [
-  {
-    title: "Bối cảnh",
-    items: [
-      "Tài liệu mô tả cấu trúc định dạng đề thi và các phần kiến thức cần nắm trước buổi làm việc.",
-      "Nội dung có nhiều thuật ngữ về tự luận, trắc nghiệm, triết học, kinh tế học vĩ mô và lý luận nhà nước pháp luật.",
-    ],
-  },
-  {
-    title: "Nội dung chính",
-    items: [
-      "Đề thi gồm phần tự luận bắt buộc và phần trắc nghiệm tự chọn.",
-      "Tổng điểm 100, trong đó tự luận 30 điểm và trắc nghiệm 70 điểm.",
-      "Thời gian làm bài 150 phút, hình thức làm bài trên máy.",
-    ],
-  },
-  {
-    title: "Điểm cần quyết định",
-    items: [
-      "Thống nhất phạm vi các lĩnh vực kiến thức được lựa chọn.",
-      "Làm rõ cách áp dụng tỷ trọng đánh giá: 20% biết, 30% hiểu, 50% vận dụng.",
-    ],
-  },
-  {
-    title: "Tác động",
-    items: [
-      "Người dự họp cần chuẩn bị nội dung theo từng nhóm kiến thức và năng lực đánh giá.",
-      "Các tiêu chí đánh giá ảnh hưởng trực tiếp tới cách ôn tập, ra đề và tổ chức thi.",
-    ],
-  },
-  {
-    title: "Rủi ro / lưu ý",
-    items: [
-      "Cần tránh hiểu sai giữa nội dung bắt buộc và nội dung tự chọn.",
-      "Cần kiểm tra lại bảng biểu gốc khi dùng kết quả markdown vì table parser hiện là placeholder.",
-    ],
-  },
-];
+const initialStatus: StatusResponse = {
+  document_id: mockReport.document_id,
+  status: "completed",
+  stage: "completed",
+  progress: 100,
+  elapsed_seconds: mockReport.processing_seconds,
+  error: null,
+};
 
-const terms = [
-  ["Nghị quyết", "Văn bản thể hiện quyết định hoặc chủ trương được cơ quan có thẩm quyền thông qua.", "Trang 4"],
-  ["Trách nhiệm", "Nghĩa vụ được giao cho cơ quan, tổ chức hoặc cá nhân thực hiện.", "Trang 2, 3"],
-  ["Tự luận", "Dạng câu hỏi yêu cầu trình bày lập luận, phân tích và quan điểm bằng văn viết.", "Trang 1, 2"],
-  ["Trắc nghiệm", "Dạng câu hỏi có lựa chọn trả lời, dùng để kiểm tra phạm vi kiến thức rộng.", "Trang 1, 2"],
-  ["Nghị luận xã hội", "Bài phân tích, bàn luận về vấn đề xã hội, chính trị, kinh tế hoặc văn hóa.", "Trang 1"],
-  ["Kinh tế học vĩ mô", "Lĩnh vực nghiên cứu các biến số lớn của nền kinh tế.", "Trang 2, 3"],
-  ["Triết học", "Lĩnh vực nghiên cứu thế giới quan, phương pháp luận và nhận thức.", "Trang 1, 2, 3"],
-  ["Lý luận nhà nước và pháp luật", "Môn học về bản chất, tổ chức nhà nước và hệ thống pháp luật.", "Trang 1, 3"],
-  ["Tỷ trọng đánh giá", "Tỷ lệ phân bổ tiêu chí được dùng để chấm điểm, đánh giá.", "Trang 1"],
-  ["Vận dụng", "Mức độ yêu cầu áp dụng kiến thức để xử lý tình huống.", "Trang 1"],
-];
+type ChatMessage =
+  | {
+      role: "user";
+      text: string;
+    }
+  | {
+      role: "assistant";
+      text: string;
+      insufficientEvidence: boolean;
+      citationIds: string[];
+      latencyMs: number;
+    };
 
-const questions = [
-  "Nội dung nào là bắt buộc phải quyết định hoặc thống nhất trong cuộc họp?",
-  "Các tiêu chí, tỷ trọng hoặc căn cứ đánh giá đã đủ rõ để triển khai chưa?",
-  "Những nhóm đối tượng hoặc đơn vị nào chịu tác động trực tiếp từ nội dung này?",
-  "Có điểm nào cần bổ sung căn cứ pháp lý, dữ liệu hoặc tài liệu liên quan không?",
-  "Rủi ro lớn nhất nếu triển khai theo nội dung hiện tại là gì và ai chịu trách nhiệm xử lý?",
+const initialMessages: ChatMessage[] = [
+  {
+    role: "user",
+    text: "Tổng doanh thu thuần của mảng dịch vụ đám mây trong quý 3 là bao nhiêu, và có sự tăng trưởng nào so với cùng kỳ năm ngoái không?",
+  },
+  {
+    role: "assistant",
+    text: "Dựa trên báo cáo, tổng doanh thu thuần của mảng dịch vụ đám mây trong Quý 3 năm 2023 đạt 4.250 tỷ VNĐ. So với cùng kỳ năm 2022, mảng này ghi nhận mức tăng trưởng 37,1%.",
+    insufficientEvidence: false,
+    citationIds: ["P12-D7", "P14-D2"],
+    latencyMs: 420,
+  },
 ];
 
 export default function Home() {
+  const [view, setView] = useState<ViewKey>("upload");
+  const [apiMode, setApiMode] = useState<ApiMode>("api");
+  const [documentId, setDocumentId] = useState<string | null>(null);
+  const [documentStatus, setDocumentStatus] = useState<DocumentStatus>("queued");
+  const [status, setStatus] = useState<StatusResponse>(initialStatus);
+  const [report, setReport] = useState<ReportResponse | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const activeReport = report ?? mockReport;
+  const [selectedCitationId, setSelectedCitationId] = useState<string>("P14-D2");
+  const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
+  const [isCitationLoading, setIsCitationLoading] = useState(false);
+  const selectedCitation = activeReport.citations[selectedCitationId] ?? null;
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [question, setQuestion] = useState("");
+  const [isAsking, setIsAsking] = useState(false);
+  const canAsk = documentStatus === "completed" && Boolean(report);
+
+  const activeTitle = useMemo(() => {
+    if (view === "upload") return "Tải tài liệu họp";
+    if (view === "processing") return stageLabel(status.stage);
+    if (view === "report") return "Tóm tắt điều hành";
+    return activeReport.file_name;
+  }, [activeReport.file_name, status.stage, view]);
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    setSelectedFile(file);
+    setUploadError(file ? validateDocumentFile(file) : null);
+  }
+
+  async function handleUpload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedFile) {
+      setUploadError("Vui lòng chọn một tệp PDF hoặc DOCX.");
+      return;
+    }
+
+    const validationError = validateDocumentFile(selectedFile);
+    if (validationError) {
+      setUploadError(validationError);
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadError(null);
+    setView("processing");
+
+    const upload = await uploadDocument(selectedFile);
+    setApiMode(upload.apiMode);
+    setDocumentId(upload.document_id);
+    setDocumentStatus(upload.status);
+    setStatus({
+      document_id: upload.document_id,
+      status: upload.status,
+      stage: upload.status === "queued" ? "queued" : "extracting",
+      progress: upload.status === "queued" ? 5 : 18,
+      elapsed_seconds: 0,
+      error: null,
+    });
+    setIsUploading(false);
+    setIsPolling(true);
+  }
+
+  function resetUpload() {
+    setView("upload");
+    setDocumentId(null);
+    setReport(null);
+    setDocumentStatus("queued");
+    setStatus(initialStatus);
+    setSelectedFile(null);
+    setUploadError(null);
+    setIsUploading(false);
+    setIsPolling(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleSelectCitation(citationId: string) {
+    const citation = activeReport.citations[citationId];
+    if (!citation) return;
+
+    setSelectedCitationId(citationId);
+    setIsCitationLoading(true);
+    const page = await getDocumentPage(activeReport.document_id, citation.page);
+    setApiMode(page.apiMode);
+    setSelectedPage(page);
+    setIsCitationLoading(false);
+  }
+
+  async function handleAskQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = question.trim();
+    if (!trimmed || !canAsk || isAsking) return;
+
+    setQuestion("");
+    setIsAsking(true);
+    setMessages((current) => [...current, { role: "user", text: trimmed }]);
+
+    const response: QuestionResponse & { apiMode: ApiMode } = await askDocumentQuestion(
+      activeReport.document_id,
+      trimmed,
+    );
+    setApiMode(response.apiMode);
+    setMessages((current) => [
+      ...current,
+      {
+        role: "assistant",
+        text: response.answer,
+        insufficientEvidence: response.insufficient_evidence,
+        citationIds: response.citation_ids,
+        latencyMs: response.latency_ms,
+      },
+    ]);
+    setIsAsking(false);
+  }
+
+  useEffect(() => {
+    if (!documentId || !isPolling) return;
+
+    let cancelled = false;
+    const currentDocumentId = documentId;
+
+    async function tick() {
+      const nextStatus = await getDocumentStatus(currentDocumentId);
+      if (cancelled) return;
+
+      setApiMode(nextStatus.apiMode);
+      setStatus(nextStatus);
+      setDocumentStatus(nextStatus.status);
+
+      if (nextStatus.status === "completed") {
+        const nextReport = await getDocumentReport(currentDocumentId);
+        if (cancelled) return;
+        setApiMode(nextReport.apiMode);
+        setReport(nextReport);
+        setView("qa");
+        setIsPolling(false);
+        return;
+      }
+
+      if (nextStatus.status === "failed") {
+        setIsPolling(false);
+      }
+    }
+
+    tick();
+    const interval = window.setInterval(tick, 1800);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [documentId, isPolling]);
+
   return (
-    <main className="min-h-screen bg-background">
-      <section className="mx-auto max-w-7xl px-6 pt-32 pb-10">
-        <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
-          <div className="space-y-7">
-            <Badge variant="outline" className="h-7 rounded-full px-3">
-              Paperless Meetings MVP
-            </Badge>
-            <div className="space-y-5">
-              <h1 className="max-w-4xl text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
-                Dashboard đọc nhanh tài liệu họp cấp tỉnh
-              </h1>
-              <p className="max-w-2xl text-lg leading-8 text-muted-foreground">
-                Upload PDF/Word, hệ thống trích xuất nội dung, tóm tắt theo điểm
-                quyết định, giải thích thuật ngữ và trả lời câu hỏi tiếng Việt
-                với trích dẫn trang.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="rounded-full">
-                <UploadCloud className="size-4" />
-                Upload tài liệu
-              </Button>
-              <Button size="lg" variant="outline" className="rounded-full">
-                Xem kết quả demo 01.pdf
-              </Button>
+    <main className="min-h-screen bg-[#fafaf4] text-[#1a1c19]">
+      <div className="grid min-h-screen lg:grid-cols-[280px_minmax(0,1fr)_360px]">
+        <SideNav activeView={view} onChange={setView} onNewDocument={resetUpload} />
+        <section className="flex min-h-screen flex-col border-r border-[#c4c7c7]/70">
+          <TopBar
+            title={activeTitle}
+            apiMode={apiMode}
+            pageCount={activeReport.page_count}
+            status={documentStatus}
+          />
+          <div className="flex-1 overflow-auto px-4 py-6 sm:px-6">
+            {view === "upload" && (
+              <UploadWorkspace
+                fileInputRef={fileInputRef}
+                selectedFile={selectedFile}
+                uploadError={uploadError}
+                isUploading={isUploading}
+                onFileChange={handleFileChange}
+                onSubmit={handleUpload}
+              />
+            )}
+            {view === "processing" && (
+              <ProcessingWorkspace status={status} apiMode={apiMode} onRetry={resetUpload} />
+            )}
+            {view === "report" && (
+              <ReportWorkspace report={activeReport} onSelectCitation={handleSelectCitation} />
+            )}
+            {view === "qa" && (
+              <QaWorkspace
+                report={activeReport}
+                messages={messages}
+                question={question}
+                canAsk={canAsk}
+                isAsking={isAsking}
+                onQuestionChange={setQuestion}
+                onSubmit={handleAskQuestion}
+                onSelectCitation={handleSelectCitation}
+              />
+            )}
+            <div className="mt-6 lg:hidden">
+              <CitationViewer
+                report={activeReport}
+                citationId={selectedCitationId}
+                citation={selectedCitation}
+                page={selectedPage}
+                isLoading={isCitationLoading}
+              />
             </div>
           </div>
-
-          <Card className="border-foreground/10 bg-gradient-to-br from-card to-muted/40 shadow-2xl shadow-foreground/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CheckCircle2 className="size-5 text-emerald-500" />
-                Kết quả xử lý gần nhất
-              </CardTitle>
-              <CardDescription>
-                Smoke test chạy từ pipeline Python với YOLOv8 table detection.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2">
-              {stats.map((item) => (
-                <div key={item.label} className="rounded-xl border bg-background/70 p-4">
-                  <item.icon className="mb-3 size-5 text-muted-foreground" />
-                  <div className="text-2xl font-semibold">{item.value}</div>
-                  <div className="text-sm font-medium">{item.label}</div>
-                  <div className="text-xs text-muted-foreground">{item.detail}</div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      </section>
-
-      <section id="dashboard" className="mx-auto grid max-w-7xl gap-6 px-6 py-8 lg:grid-cols-[280px_1fr]">
-        <aside className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Luồng xử lý</CardTitle>
-              <CardDescription>Dưới 60 giây cho tài liệu dài.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {["PDF native", "YOLO detect bảng", "Mask text vùng bảng", "Stitch text + markdown", "Summary / Q&A"].map((step, index) => (
-                <div key={step} className="flex items-center gap-3 rounded-lg border p-3">
-                  <span className="flex size-7 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
-                    {index + 1}
-                  </span>
-                  <span className="text-sm">{step}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Trạng thái MVP</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <Status label="Extraction pipeline" done />
-              <Status label="Dashboard template" done />
-              <Status label="Table markdown AI" />
-              <Status label="LLM production" />
-            </CardContent>
-          </Card>
+        </section>
+        <aside className="hidden min-h-screen bg-[#fafaf7] lg:block">
+          <CitationViewer
+            report={activeReport}
+            citationId={selectedCitationId}
+            citation={selectedCitation}
+            page={selectedPage}
+            isLoading={isCitationLoading}
+          />
         </aside>
-
-        <div className="space-y-6">
-          <Card id="summary">
-            <CardHeader>
-              <CardTitle>Tóm tắt có cấu trúc</CardTitle>
-              <CardDescription>
-                Phù hợp yêu cầu: bối cảnh, nội dung chính, điểm quyết định và tác động.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              {summary.map((section) => (
-                <div key={section.title} className="rounded-xl border p-4">
-                  <h3 className="mb-3 font-semibold">{section.title}</h3>
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                    {section.items.map((item) => (
-                      <li key={item} className="leading-6">- {item}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
-            <Card id="terms">
-              <CardHeader>
-                <CardTitle>Thuật ngữ được highlight</CardTitle>
-                <CardDescription>10 thuật ngữ chuyên ngành kèm giải thích và trang xuất hiện.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {terms.map(([term, explanation, pages]) => (
-                  <div key={term} className="rounded-xl border p-4">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <Badge>{term}</Badge>
-                      <Badge variant="outline">{pages}</Badge>
-                    </div>
-                    <p className="text-sm leading-6 text-muted-foreground">{explanation}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <div className="space-y-6">
-              <Card id="questions">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <HelpCircle className="size-5" />
-                    Câu hỏi gợi ý
-                  </CardTitle>
-                  <CardDescription>Gợi ý cho lãnh đạo chuẩn bị phản biện.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {questions.map((question, index) => (
-                    <div key={question} className="rounded-xl border p-3 text-sm leading-6">
-                      <span className="mr-2 font-semibold">{index + 1}.</span>
-                      {question}
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card id="qa">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <MessageSquareText className="size-5" />
-                    Hỏi đáp có citation
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="rounded-xl border bg-muted/40 p-4">
-                    <p className="text-sm font-medium">Người dùng hỏi</p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Tài liệu này yêu cầu người dự họp cần lưu ý những nội dung chính nào?
-                    </p>
-                  </div>
-                  <div className="rounded-xl border p-4">
-                    <p className="text-sm font-medium">AI trả lời</p>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      Cần lưu ý cơ cấu điểm, thời gian làm bài, hình thức làm bài trên máy,
-                      tỷ trọng đánh giá và các nhóm kiến thức tự chọn.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {["Trang 1", "Trang 2", "Trang 3"].map((page) => (
-                        <Badge key={page} variant="outline">{page}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-
-          <Card id="roadmap">
-            <CardHeader>
-              <CardTitle>Roadmap triển khai tại UBND</CardTitle>
-              <CardDescription>Từ demo local tới triển khai an toàn trong cơ quan.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              {[
-                ["MVP", "Local dashboard, PDF extraction, summary, terms, questions, Q&A."],
-                ["Pilot", "Kết nối LLM tiếng Việt, vector search, Word upload, kiểm duyệt thuật ngữ."],
-                ["Production", "SSO, audit log, cache tài liệu họp, phân quyền và triển khai nội bộ."],
-              ].map(([title, description]) => (
-                <div key={title} className="rounded-xl border p-4">
-                  <h3 className="mb-2 font-semibold">{title}</h3>
-                  <p className="text-sm leading-6 text-muted-foreground">{description}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0" />
-            <p>
-              Demo hiện dùng dữ liệu tĩnh từ test `01.pdf`. Bước sau cần nối API Python để upload file thật và stream kết quả xử lý vào dashboard.
-            </p>
-          </div>
-        </div>
-      </section>
+      </div>
     </main>
   );
 }
 
-function Status({ label, done = false }: { label: string; done?: boolean }) {
+function SideNav({
+  activeView,
+  onChange,
+  onNewDocument,
+}: {
+  activeView: ViewKey;
+  onChange: (view: ViewKey) => void;
+  onNewDocument: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between rounded-lg border p-3">
-      <span>{label}</span>
-      <Badge variant={done ? "default" : "outline"}>{done ? "Done" : "Next"}</Badge>
+    <aside className="border-r border-[#c4c7c7] bg-[#eeeee9] px-4 py-5 lg:min-h-screen">
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold tracking-tight">Antipaper</h1>
+        <p className="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">
+          Executive Intelligence
+        </p>
+      </div>
+      <Button
+        type="button"
+        className="mb-8 h-10 w-full rounded-lg bg-black text-white hover:bg-black/85"
+        onClick={onNewDocument}
+      >
+        <Plus className="size-4" />
+        New Document
+      </Button>
+      <nav className="space-y-1">
+        {navItems.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => onChange(item.key)}
+            className={cn(
+              "flex h-12 w-full items-center gap-3 rounded-lg px-4 text-left text-[#444748] transition",
+              activeView === item.key && "bg-[#c4c7c7]/30 font-bold text-black",
+            )}
+          >
+            <item.icon className="size-5" />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="mt-10 space-y-1 lg:fixed lg:bottom-5 lg:w-[248px]">
+        <button className="flex h-10 w-full items-center gap-3 rounded-lg px-4 text-[#444748]">
+          <Settings className="size-5" />
+          <span>Settings</span>
+        </button>
+        <button className="flex h-10 w-full items-center gap-3 rounded-lg px-4 text-[#444748]">
+          <CircleHelp className="size-5" />
+          <span>Help</span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function TopBar({
+  title,
+  apiMode,
+  pageCount,
+  status,
+}: {
+  title: string;
+  apiMode: ApiMode;
+  pageCount: number;
+  status: DocumentStatus;
+}) {
+  return (
+    <header className="sticky top-0 z-10 flex min-h-18 items-center justify-between border-b border-[#c4c7c7]/70 bg-[#fafaf4]/90 px-4 py-3 backdrop-blur sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-9 items-center justify-center rounded bg-[#eeeee9]">
+          <FileText className="size-5" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="truncate text-xl font-medium tracking-tight sm:text-2xl">{title}</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-[#444748]">
+            <span className="size-1.5 rounded-full bg-[#566340]" />
+            <span>{status === "completed" ? `Đã phân tích ${pageCount} trang` : "Đang xử lý"}</span>
+            {apiMode === "mock" && <Badge variant="outline">Demo fallback</Badge>}
+          </div>
+        </div>
+      </div>
+      <LoaderCircle className="size-5 text-[#444748]" />
+    </header>
+  );
+}
+
+function UploadWorkspace({
+  fileInputRef,
+  selectedFile,
+  uploadError,
+  isUploading,
+  onFileChange,
+  onSubmit,
+}: {
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  selectedFile: File | null;
+  uploadError: string | null;
+  isUploading: boolean;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="grid gap-6 xl:grid-cols-[minmax(0,500px)_380px]">
+      <section>
+        <div className="mb-6">
+          <h2 className="text-2xl font-medium tracking-tight">Tải tài liệu họp</h2>
+          <p className="mt-2 text-[#444748]">Hỗ trợ PDF, DOCX. Tối đa 25MB mỗi tệp.</p>
+        </div>
+        <label className="flex min-h-[400px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#c4c7c7] bg-white p-8 text-center shadow-sm">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            className="sr-only"
+            onChange={onFileChange}
+          />
+          <span className="mb-6 flex size-20 items-center justify-center rounded-full bg-[#eeeee9]">
+            <FileUp className="size-9" />
+          </span>
+          <span className="text-lg font-medium">
+            {selectedFile ? selectedFile.name : "Kéo thả tài liệu hoặc chọn từ máy"}
+          </span>
+          <span className="mt-3 text-sm text-[#444748]">PDF/DOCX, tối đa 25MB</span>
+        </label>
+        {uploadError && (
+          <p className="mt-4 flex items-center gap-2 text-sm text-red-700">
+            <AlertTriangle className="size-4" />
+            {uploadError}
+          </p>
+        )}
+        <Button
+          type="submit"
+          disabled={isUploading}
+          className="mt-6 h-10 rounded-lg bg-black px-6 text-white hover:bg-black/85"
+        >
+          {isUploading ? "Đang tải..." : "Bắt đầu phân tích"}
+        </Button>
+      </section>
+      <aside className="rounded-lg border border-[#c4c7c7] bg-white p-6">
+        <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">Mục tiêu phân tích</p>
+        <div className="mt-6 space-y-5">
+          <UploadGoal title="Tóm tắt điều hành" description="Rút ra bối cảnh, nội dung chính, quyết định và tác động." />
+          <UploadGoal title="Hỏi đáp có nguồn" description="Mỗi câu trả lời cần citation để kiểm chứng nhanh." />
+        </div>
+      </aside>
+    </form>
+  );
+}
+
+function UploadGoal({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="flex gap-3">
+      <CheckCircle2 className="mt-1 size-5 text-[#566340]" />
+      <div>
+        <h3 className="font-medium">{title}</h3>
+        <p className="mt-1 text-sm leading-6 text-[#444748]">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function ProcessingWorkspace({
+  status,
+  apiMode,
+  onRetry,
+}: {
+  status: StatusResponse;
+  apiMode: ApiMode;
+  onRetry: () => void;
+}) {
+  const steps: ProcessingStage[] = ["extracting", "detecting_tables", "stitching", "summarizing"];
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <section className="flex min-h-[560px] flex-col items-center justify-center rounded-lg bg-[#fafaf4] p-8 text-center">
+        <div className="relative flex size-48 items-center justify-center rounded-full border-8 border-[#d3e3b7] bg-white">
+          <span className="text-4xl font-semibold">{status.progress}%</span>
+        </div>
+        <h2 className="mt-8 text-2xl font-medium">{stageLabel(status.stage)}</h2>
+        <p className="mt-3 max-w-md text-[#444748]">
+          {status.status === "failed"
+            ? status.error?.message ?? "Quá trình xử lý thất bại."
+            : "Đang trích xuất, nhận diện bảng và tạo intelligence report."}
+        </p>
+        <div className="mt-6 flex items-center gap-3 font-mono text-xs text-[#444748]">
+          <Clock3 className="size-4" />
+          <span>{status.elapsed_seconds.toFixed(1)}s</span>
+          {apiMode === "mock" && <Badge variant="outline">Demo fallback</Badge>}
+        </div>
+        {status.status === "failed" && (
+          <Button type="button" variant="outline" className="mt-6 rounded-lg" onClick={onRetry}>
+            <RefreshCcw className="size-4" />
+            Thử lại
+          </Button>
+        )}
+      </section>
+      <aside className="rounded-lg border border-[#c4c7c7] bg-white p-6">
+        <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">Pipeline status</p>
+        <div className="mt-6 space-y-4">
+          {steps.map((step) => (
+            <div key={step} className="flex items-center gap-3">
+              <span
+                className={cn(
+                  "size-3 rounded-full border border-[#c4c7c7]",
+                  status.progress >= stepProgress(step) && "border-[#566340] bg-[#566340]",
+                )}
+              />
+              <span className="text-sm">{stageLabel(step)}</span>
+            </div>
+          ))}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function stepProgress(stage: ProcessingStage) {
+  const progress: Record<ProcessingStage, number> = {
+    queued: 0,
+    extracting: 15,
+    detecting_tables: 35,
+    stitching: 55,
+    summarizing: 75,
+    completed: 100,
+    failed: 100,
+  };
+  return progress[stage];
+}
+
+function ReportWorkspace({
+  report,
+  onSelectCitation,
+}: {
+  report: ReportResponse;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  const sections = [
+    ["Bối cảnh", report.summary.context],
+    ["Nội dung chính", report.summary.main_content],
+    ["Điểm cần quyết định", report.summary.decision_points],
+    ["Tác động", report.summary.impact],
+  ] as const;
+
+  return (
+    <div className="space-y-6">
+      <section className="grid gap-4 xl:grid-cols-2">
+        {sections.map(([title, items]) => (
+          <div key={title} className="rounded-lg border border-[#c4c7c7] bg-white p-5">
+            <h3 className="font-medium">{title}</h3>
+            <div className="mt-4 space-y-4">
+              {items.map((item) => (
+                <CitedParagraph key={item.text} item={item} report={report} onSelectCitation={onSelectCitation} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </section>
+      <section className="rounded-lg border border-[#c4c7c7] bg-white p-5">
+        <h3 className="font-medium">Thuật ngữ</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {report.terms.map((term) => (
+            <div key={term.term} className="rounded-lg border border-[#c4c7c7]/70 p-4">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge>{term.term}</Badge>
+                {term.citation_ids.map((id) => (
+                  <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+                ))}
+              </div>
+              <p className="text-sm leading-6 text-[#444748]">{term.explanation}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="rounded-lg border border-[#c4c7c7] bg-white p-5">
+        <h3 className="font-medium">Câu hỏi gợi ý</h3>
+        <div className="mt-4 space-y-3">
+          {report.suggested_questions.map((question) => (
+            <div key={question.question} className="rounded-lg border border-[#c4c7c7]/70 p-4">
+              <p className="font-medium">{question.question}</p>
+              <p className="mt-2 text-sm leading-6 text-[#444748]">{question.rationale}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {question.citation_ids.map((id) => (
+                  <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CitedParagraph({
+  item,
+  report,
+  onSelectCitation,
+}: {
+  item: { text: string; citation_ids: string[] };
+  report: ReportResponse;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  return (
+    <div>
+      <p className="text-sm leading-6 text-[#1a1c19]">{item.text}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.citation_ids.map((id) => (
+          <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CitationButton({
+  citationId,
+  report,
+  onSelectCitation,
+}: {
+  citationId: string;
+  report: ReportResponse;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  const citation = report.citations[citationId];
+  if (!citation) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectCitation(citationId)}
+      className="rounded-full bg-[#566340] px-2.5 py-1 font-mono text-[11px] text-white"
+    >
+      {citationLabel(citation)}
+    </button>
+  );
+}
+
+function CitationViewer({
+  report,
+  citationId,
+  citation,
+  page,
+  isLoading,
+}: {
+  report: ReportResponse;
+  citationId: string;
+  citation: CitationMeta | null;
+  page: PageResponse | null;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="min-h-full border-l border-[#c4c7c7] bg-[#fafaf7]">
+      <header className="flex h-18 items-center justify-between border-b border-[#c4c7c7]/70 px-5">
+        <div className="flex items-center gap-2 font-semibold">
+          <Quote className="size-4" />
+          Nguồn trích dẫn
+        </div>
+      </header>
+      <div className="space-y-6 p-5">
+        {!citation ? (
+          <p className="text-sm text-[#444748]">Chọn một citation để xem nguồn.</p>
+        ) : (
+          <>
+            <div>
+              <Badge variant="outline" className="rounded-sm font-mono uppercase">
+                {citationLabel(citation)}
+              </Badge>
+              <h3 className="mt-4 text-lg font-medium">{report.file_name}</h3>
+              <p className="mt-2 font-mono text-xs leading-5 text-[#444748]">
+                {[citation.chapter, citation.article, citation.clause].filter(Boolean).join(" / ")}
+              </p>
+            </div>
+            <div className="rounded-lg border border-[#c4c7c7] bg-white p-5 shadow-sm">
+              {isLoading ? (
+                <p className="text-sm text-[#444748]">Đang tải citation...</p>
+              ) : (
+                <p className="whitespace-pre-line text-sm leading-7 text-[#444748]">
+                  {page?.text ?? citation.excerpt}
+                </p>
+              )}
+            </div>
+            <Button type="button" variant="outline" className="w-full rounded-none">
+              <ExternalLink className="size-4" />
+              Mở toàn tài liệu
+            </Button>
+            <p className="font-mono text-[11px] text-[#444748]">Citation ID: {citationId}</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QaWorkspace({
+  report,
+  messages,
+  question,
+  canAsk,
+  isAsking,
+  onQuestionChange,
+  onSubmit,
+  onSelectCitation,
+}: {
+  report: ReportResponse;
+  messages: ChatMessage[];
+  question: string;
+  canAsk: boolean;
+  isAsking: boolean;
+  onQuestionChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  return (
+    <div className="mx-auto flex min-h-[calc(100vh-130px)] max-w-3xl flex-col">
+      <div className="flex-1 space-y-8 pb-32">
+        <div className="flex justify-center">
+          <span className="rounded-full bg-[#f4f4ee] px-3 py-1 font-mono text-xs text-[#444748]">
+            Hôm nay, 09:41
+          </span>
+        </div>
+        {messages.map((message, index) =>
+          message.role === "user" ? (
+            <div key={`${message.role}-${index}`} className="flex justify-end">
+              <div className="max-w-[486px] rounded-bl-xl rounded-br-xl rounded-tl-xl rounded-tr-sm bg-[#e8e8e3] px-6 py-4">
+                <p className="leading-7">{message.text}</p>
+              </div>
+            </div>
+          ) : (
+            <div key={`${message.role}-${index}`} className="space-y-2">
+              <p className="flex items-center gap-2 pl-1 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-[#444748]">
+                <MessageSquareText className="size-4" />
+                Antipaper AI
+              </p>
+              <div className="max-w-[560px] rounded-bl-xl rounded-br-xl rounded-tl-sm rounded-tr-xl border border-[#c4c7c7] bg-white px-6 py-5 shadow-sm">
+                <p className="leading-7">{message.text}</p>
+                {!message.insufficientEvidence && message.citationIds.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {message.citationIds.map((id) => (
+                      <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+                    ))}
+                  </div>
+                )}
+                {message.insufficientEvidence && (
+                  <Badge variant="outline" className="mt-4">
+                    Không đủ bằng chứng
+                  </Badge>
+                )}
+              </div>
+              <div className="flex gap-2 pl-1 text-[#444748]">
+                <button type="button" aria-label="Sao chép câu trả lời" className="p-1">
+                  <Copy className="size-4" />
+                </button>
+                <button type="button" aria-label="Hữu ích" className="p-1">
+                  <ThumbsUp className="size-4" />
+                </button>
+                <button type="button" aria-label="Không hữu ích" className="p-1">
+                  <ThumbsDown className="size-4" />
+                </button>
+              </div>
+            </div>
+          ),
+        )}
+      </div>
+      <form
+        onSubmit={onSubmit}
+        className="sticky bottom-0 bg-gradient-to-t from-[#fafaf4] via-[#fafaf4] to-transparent pb-6 pt-10"
+      >
+        <div className="flex items-end rounded-lg border border-[#c4c7c7] bg-white p-2 shadow-sm">
+          <textarea
+            value={question}
+            onChange={(event) => onQuestionChange(event.target.value)}
+            disabled={!canAsk || isAsking}
+            rows={1}
+            placeholder={canAsk ? "Đặt câu hỏi về tài liệu..." : "Tải và phân tích tài liệu trước khi hỏi..."}
+            className="min-h-12 flex-1 resize-none rounded-md border-0 bg-transparent px-3 py-3 outline-none disabled:cursor-not-allowed disabled:text-[#444748]/60"
+          />
+          <Button
+            type="submit"
+            disabled={!canAsk || isAsking || question.trim().length === 0}
+            className="h-11 rounded-md bg-[#d3e3b7] text-black hover:bg-[#c7d9a8]"
+            aria-label="Gửi câu hỏi"
+          >
+            <SendHorizontal className="size-5" />
+          </Button>
+        </div>
+        <p className="mt-3 text-center font-mono text-[11px] text-[#444748]/70">
+          AI có thể cung cấp thông tin không chính xác. Hãy kiểm chứng nguồn trích dẫn.
+        </p>
+      </form>
     </div>
   );
 }

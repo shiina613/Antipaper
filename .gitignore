@@ -21,6 +21,7 @@ frontend/.vercel/
 
 .artifacts/
 uploads/
+.worktrees/
 .ini
 
 # Personal working plan

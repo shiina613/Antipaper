@@ -1,11 +1,10 @@
-import { Footer } from '@/components/Blocks/Footer';
-import { Navbar } from "@/components/navbar";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
-import "./globals.css";
-import { cn } from "@/lib/utils";
 
-const inter = Inter({subsets:['latin'],variable:'--font-sans'});
+import { cn } from "@/lib/utils";
+import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Paperless Meetings Dashboard",
-  description: "AI dashboard for summarizing meeting documents with citations.",
+  title: "Antipaper",
+  description: "Executive intelligence dashboard for Vietnamese meeting documents.",
 };
 
 export default function RootLayout({
@@ -29,13 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="vi" className={cn("font-sans", inter.variable)}>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <Navbar />
-        {children}
-        <Footer />
-      </body>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
     </html>
   );
 }
