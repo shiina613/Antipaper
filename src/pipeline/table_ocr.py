@@ -13,12 +13,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
 import cv2
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
+
+if TYPE_CHECKING:
+    from .paddle_ocr import TableData
 
 
 BoundingBox = tuple[float, float, float, float]
@@ -161,3 +164,24 @@ class TableDetector:
         right = max(0, min(width, int(round(x1))))
         bottom = max(0, min(height, int(round(y1))))
         return left, top, right, bottom
+
+
+def ocr_page(image_bytes: bytes) -> str:
+    """Compatibility entry point for the standalone PaddleOCR adapter."""
+
+    from .paddle_ocr import ocr_page as recognize_page
+
+    return recognize_page(image_bytes)
+
+
+def ocr_table(
+    image_bytes: bytes,
+    *,
+    page: int | None = None,
+    bbox: BoundingBox | None = None,
+) -> "TableData":
+    """Compatibility entry point returning structured PP-StructureV3 output."""
+
+    from .paddle_ocr import ocr_table as recognize_table
+
+    return recognize_table(image_bytes, page=page, bbox=bbox)

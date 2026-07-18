@@ -19,3 +19,4 @@ frontend/.vercel/
 
 .artifacts/
 uploads/
+.ini

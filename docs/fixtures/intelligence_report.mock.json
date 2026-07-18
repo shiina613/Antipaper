@@ -1,0 +1,40 @@
+{
+  "summary": {
+    "context": [{"text": "Cuộc họp xem xét đề án chuyển đổi số phục vụ người dân.", "citation_ids": ["P1-D1"]}],
+    "main_content": [{"text": "Đề án xác định kinh phí, lộ trình, chỉ số đánh giá và cơ chế phối hợp.", "citation_ids": ["P3-D2", "P5-D3", "P8-D4"]}],
+    "decision_points": [{"text": "Cần quyết định phạm vi mở rộng sau khi có báo cáo tác động.", "citation_ids": ["P8-D4"]}],
+    "impact": [{"text": "Phạm vi triển khai hướng tới nâng cao chất lượng phục vụ người dân.", "citation_ids": ["P1-D1"]}]
+  },
+  "terms": [
+    {"term": "chuyển đổi số", "explanation": "Quá trình ứng dụng công nghệ số trong hoạt động và cung cấp dịch vụ thuộc phạm vi đề án.", "citation_ids": ["P1-D1"]},
+    {"term": "phạm vi triển khai", "explanation": "Giới hạn đối tượng và hoạt động mà đề án dự kiến áp dụng.", "citation_ids": ["P1-D1", "P8-D4"]},
+    {"term": "ngân sách được giao", "explanation": "Nguồn kinh phí đã được cấp có thẩm quyền phân bổ để thực hiện nhiệm vụ.", "citation_ids": ["P3-D2"]},
+    {"term": "dự toán", "explanation": "Ước tính chi phí phải được cơ quan chủ trì lập trước khi thực hiện.", "citation_ids": ["P3-D2"]},
+    {"term": "trách nhiệm giải trình", "explanation": "Nghĩa vụ làm rõ việc sử dụng nguồn lực và kết quả thực hiện.", "citation_ids": ["P3-D2"]},
+    {"term": "lộ trình", "explanation": "Chuỗi ba giai đoạn triển khai được xác định trong đề án.", "citation_ids": ["P5-D3"]},
+    {"term": "chỉ số đánh giá", "explanation": "Thước đo dùng để theo dõi và đánh giá kết quả triển khai.", "citation_ids": ["P5-D3"]},
+    {"term": "nghiệm thu", "explanation": "Hoạt động xác nhận kết quả hoàn thành theo thời hạn và yêu cầu.", "citation_ids": ["P5-D3"]},
+    {"term": "quản trị rủi ro", "explanation": "Cơ chế nhận diện và xử lý yếu tố có thể ảnh hưởng lộ trình.", "citation_ids": ["P5-D3"]},
+    {"term": "đầu mối phối hợp", "explanation": "Đơn vị hoặc cá nhân chịu trách nhiệm kết nối hoạt động giữa các bên.", "citation_ids": ["P8-D4"]}
+  ],
+  "suggested_questions": [
+    {"question": "Cơ quan chủ trì chịu trách nhiệm giải trình cụ thể những khoản ngân sách nào?", "rationale": "Làm rõ trách nhiệm và phạm vi kiểm soát nguồn lực trước khi quyết định.", "citation_ids": ["P3-D2"], "rubric_score": 4},
+    {"question": "Chỉ số nào được dùng để quyết định từng giai đoạn của lộ trình đã hoàn thành?", "rationale": "Bảo đảm tiêu chí nghiệm thu có thể đo lường và gắn với tiến độ.", "citation_ids": ["P5-D3"], "rubric_score": 4},
+    {"question": "Rủi ro trọng yếu trong ba giai đoạn sẽ do đầu mối nào chịu trách nhiệm xử lý?", "rationale": "Kết nối cơ chế quản trị rủi ro với trách nhiệm phối hợp thực tế.", "citation_ids": ["P5-D3", "P8-D4"], "rubric_score": 4},
+    {"question": "Báo cáo tác động cần chứng minh điều gì trước khi quyết định mở rộng phạm vi?", "rationale": "Làm rõ điều kiện ra quyết định và tránh mở rộng khi thiếu bằng chứng.", "citation_ids": ["P8-D4"], "rubric_score": 4},
+    {"question": "Mục tiêu phục vụ người dân sẽ được phản ánh trong chỉ số đánh giá nào?", "rationale": "Bảo đảm tác động dự kiến được liên kết với thước đo của đề án.", "citation_ids": ["P1-D1", "P5-D3"], "rubric_score": 4}
+  ],
+  "stage_timings": [
+    {"stage": "map", "duration_ms": 0.0, "llm_calls": 2},
+    {"stage": "reduce", "duration_ms": 0.0, "llm_calls": 1},
+    {"stage": "validation", "duration_ms": 0.0, "llm_calls": 0}
+  ],
+  "quality": {
+    "required_summary_complete": true,
+    "term_count": 10,
+    "question_count": 5,
+    "questions_passing_rubric": 5,
+    "citations_valid": true,
+    "passed": true
+  }
+}

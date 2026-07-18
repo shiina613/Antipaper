@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
-from pipeline.processor import ProcessedDocument
+if TYPE_CHECKING:
+    from pipeline.processor import ProcessedDocument
 
 
 @dataclass(frozen=True)
