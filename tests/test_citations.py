@@ -42,3 +42,14 @@ def test_authoritative_excerpt_must_come_from_referenced_chunk():
     result = validate_citations(["P3-D2"], NormalizedDocument.model_validate(payload))
     assert not result.valid
     assert "excerpt" in result.invalid_reasons[0]
+
+
+def test_terminal_ellipsis_accepts_mid_word_source_prefix_but_rejects_unrelated():
+    payload = json.loads((Path(__file__).parents[1] / "docs/fixtures/normalized_document.mock.json").read_text(encoding="utf-8"))
+    payload["citations"]["P3-D2"]["excerpt"] = "Kinh phí thực hiện lấy từ ngân s..."
+    valid = validate_citations(["P3-D2"], NormalizedDocument.model_validate(payload))
+    assert valid.valid
+
+    payload["citations"]["P3-D2"]["excerpt"] = "Kinh phí hoàn toàn khác..."
+    invalid = validate_citations(["P3-D2"], NormalizedDocument.model_validate(payload))
+    assert not invalid.valid

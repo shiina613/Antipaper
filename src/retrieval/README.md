@@ -35,6 +35,20 @@ check = validate_citations(
 rendered = render_citations(check)
 ```
 
+Semantic vectors can be precomputed without network activity in constructors:
+
+```python
+index = build_index(document, vectors={chunk.chunk_id: vector for chunk, vector in ...})
+index = await build_index_async(document, async_batch_embedder)
+results = await index.asearch("question", async_query_embedder, top_k=5)
+```
+
+`build_index_async` calls document embedding once in batch. Query embedding is
+called once per `asearch`; failures fall back to lexical retrieval without
+mutating index vectors. `lexical_reservation_threshold` defaults to `0.5` and
+reserves a positive-BM25 lexical top result when meaningful query-token
+coverage reaches that threshold.
+
 `RetrievalResult` giữ nguyên `chunk`, `chunk_id`, `metadata`, `score`, `lexical_score`, `semantic_score`.
 
 `GroundedAnswer` cung cấp `answer`, `citations`, `citation_ids`, `confidence`, `out_of_scope`, `insufficient_evidence`, `latency_ms`; `to_dict()` trả payload serializable.
@@ -58,6 +72,14 @@ Async code dùng `evaluate_golden_set_async`. Case in-scope được chấm retr
 ```powershell
 python -m pytest tests/test_retrieval.py tests/test_citations.py tests/test_golden_retrieval.py -q
 ```
+
+## GPT-4o mini tùy chọn
+
+Backend dùng shared `LlmClient` khi có `OPENAI_API_KEY` (ưu tiên) hoặc
+`LLM_API_KEY`; model mặc định `gpt-4o-mini`. Endpoint mặc định là
+`https://api.openai.com/v1/chat/completions`, có thể ghi đè bằng
+`LLM_API_URL` hoặc `LLM_BASE_URL`. Không commit key. Thiếu cấu hình, lỗi API,
+timeout hoặc schema đều fallback về extractive answer/OOS.
 
 ## Giới hạn và ownership
 

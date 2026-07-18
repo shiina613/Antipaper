@@ -88,7 +88,7 @@ class DocumentReport(BaseModel):
 
 
 class QuestionRequest(BaseModel):
-    question: str = Field(min_length=1)
+    question: str = Field(min_length=1, max_length=4000)
 
 
 class QuestionResponse(BaseModel):

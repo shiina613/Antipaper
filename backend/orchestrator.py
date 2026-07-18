@@ -24,7 +24,7 @@ try:
     )
     from intelligence.contracts import Citation as ContractCitation
     from intelligence.contracts import DocumentChunk
-    from retrieval import GroundedQAService, build_index, extract_related_documents
+    from retrieval import GroundedQAService, LlmRagAdapter, build_index, extract_related_documents
     from summary import DocumentSummaryEngine
 except ModuleNotFoundError:  # Running backend from repo root without pytest PYTHONPATH.
     from src.ingestion import IngestionOptions, ingest_document
@@ -36,7 +36,7 @@ except ModuleNotFoundError:  # Running backend from repo root without pytest PYT
     )
     from src.intelligence.contracts import Citation as ContractCitation
     from src.intelligence.contracts import DocumentChunk
-    from src.retrieval import GroundedQAService, build_index, extract_related_documents
+    from src.retrieval import GroundedQAService, LlmRagAdapter, build_index, extract_related_documents
     from src.summary import DocumentSummaryEngine
 
 from .schemas import (
@@ -91,9 +91,10 @@ class OrchestrationResult:
 class DocumentOrchestrator:
     """Translate uploaded bytes into processed documents and API responses."""
 
-    def __init__(self) -> None:
+    def __init__(self, llm_client: object | None = None) -> None:
         self._engine = MeetingIntelligenceEngine()
         self._summary_engine = DocumentSummaryEngine()
+        self._llm = LlmRagAdapter(llm_client) if llm_client is not None else None
 
     def process(self, *, document_id: str, file_name: str, file_bytes: bytes) -> OrchestrationResult:
         processed_document = self._load_document(file_name=file_name, file_bytes=file_bytes)
@@ -113,7 +114,7 @@ class DocumentOrchestrator:
         )
         return OrchestrationResult(processed_document=processed_document, report=report)
 
-    def answer_question(self, processed_document: ProcessedDocument, question: str) -> QuestionResponse:
+    async def answer_question(self, processed_document: ProcessedDocument, question: str, retrieval_index=None, query_embedder=None) -> QuestionResponse:
         normalized = processed_document.normalized_document
         if normalized is None:
             normalized = self._normalized_from_pages(
@@ -123,7 +124,8 @@ class DocumentOrchestrator:
             )
             processed_document.normalized_document = normalized
 
-        answer = self._run_async(GroundedQAService(build_index(normalized)).answer(question))
+        index = retrieval_index or build_index(normalized)
+        answer = await GroundedQAService(index, llm=self._llm, query_embedder=query_embedder).answer(question)
         return QuestionResponse(
             answer=answer.answer,
             insufficient_evidence=bool(
@@ -134,20 +136,6 @@ class DocumentOrchestrator:
             citation_ids=list(answer.citation_ids or []),
             latency_ms=float(getattr(answer, "latency_ms", 0.0) or 0.0),
         )
-
-    @staticmethod
-    def _run_async(awaitable):
-        """Run a coroutine from sync code, including inside FastAPI's event loop."""
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(awaitable)
-
-        from concurrent.futures import ThreadPoolExecutor
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, awaitable).result()
 
     def to_page_blocks(self, processed_document: ProcessedDocument) -> list[PageBlock]:
         return [
@@ -559,4 +547,7 @@ class DocumentOrchestrator:
         compact = " ".join(text.split())
         if len(compact) <= limit:
             return compact
-        return compact[: limit - 3].rstrip() + "..."
+        prefix = compact[: limit - 3].rstrip()
+        if " " in prefix:
+            prefix = prefix.rsplit(" ", 1)[0]
+        return prefix + "..."

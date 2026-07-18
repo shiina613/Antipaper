@@ -6,7 +6,9 @@ from .client import (
     LlmClientError,
     LlmClientTimeoutError,
     LlmSettings,
+    SharedAsyncLimiter,
     call_llm,
+    shared_limiter,
 )
 
 __all__ = [
@@ -15,5 +17,7 @@ __all__ = [
     "LlmClientError",
     "LlmClientTimeoutError",
     "LlmSettings",
+    "SharedAsyncLimiter",
     "call_llm",
+    "shared_limiter",
 ]
