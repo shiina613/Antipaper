@@ -11,11 +11,16 @@ import {
   FileText,
   FileUp,
   LoaderCircle,
+  Copy,
+  MessageSquareText,
   Plus,
   Quote,
   RefreshCcw,
   SearchCheck,
+  SendHorizontal,
   Settings,
+  ThumbsDown,
+  ThumbsUp,
   Upload,
 } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +33,7 @@ import {
   type ProcessingStage,
   type ReportResponse,
   type StatusResponse,
+  askDocumentQuestion,
   citationLabel,
   getDocumentReport,
   getDocumentPage,
@@ -36,6 +42,7 @@ import {
   stageLabel,
   type CitationMeta,
   type PageResponse,
+  type QuestionResponse,
   uploadDocument,
   validateDocumentFile,
 } from "@/lib/antipaper-api";
@@ -59,9 +66,36 @@ const initialStatus: StatusResponse = {
   error: null,
 };
 
+type ChatMessage =
+  | {
+      role: "user";
+      text: string;
+    }
+  | {
+      role: "assistant";
+      text: string;
+      insufficientEvidence: boolean;
+      citationIds: string[];
+      latencyMs: number;
+    };
+
+const initialMessages: ChatMessage[] = [
+  {
+    role: "user",
+    text: "Tổng doanh thu thuần của mảng dịch vụ đám mây trong quý 3 là bao nhiêu, và có sự tăng trưởng nào so với cùng kỳ năm ngoái không?",
+  },
+  {
+    role: "assistant",
+    text: "Dựa trên báo cáo, tổng doanh thu thuần của mảng dịch vụ đám mây trong Quý 3 năm 2023 đạt 4.250 tỷ VNĐ. So với cùng kỳ năm 2022, mảng này ghi nhận mức tăng trưởng 37,1%.",
+    insufficientEvidence: false,
+    citationIds: ["P12-D7", "P14-D2"],
+    latencyMs: 420,
+  },
+];
+
 export default function Home() {
   const [view, setView] = useState<ViewKey>("upload");
-  const [apiMode, setApiMode] = useState<ApiMode>("mock");
+  const [apiMode, setApiMode] = useState<ApiMode>("api");
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [documentStatus, setDocumentStatus] = useState<DocumentStatus>("queued");
   const [status, setStatus] = useState<StatusResponse>(initialStatus);
@@ -77,6 +111,10 @@ export default function Home() {
   const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
   const [isCitationLoading, setIsCitationLoading] = useState(false);
   const selectedCitation = activeReport.citations[selectedCitationId] ?? null;
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [question, setQuestion] = useState("");
+  const [isAsking, setIsAsking] = useState(false);
+  const canAsk = documentStatus === "completed" && Boolean(report);
 
   const activeTitle = useMemo(() => {
     if (view === "upload") return "Tải tài liệu họp";
@@ -128,6 +166,8 @@ export default function Home() {
     setView("upload");
     setDocumentId(null);
     setReport(null);
+    setDocumentStatus("queued");
+    setStatus(initialStatus);
     setSelectedFile(null);
     setUploadError(null);
     setIsUploading(false);
@@ -145,6 +185,33 @@ export default function Home() {
     setApiMode(page.apiMode);
     setSelectedPage(page);
     setIsCitationLoading(false);
+  }
+
+  async function handleAskQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = question.trim();
+    if (!trimmed || !canAsk || isAsking) return;
+
+    setQuestion("");
+    setIsAsking(true);
+    setMessages((current) => [...current, { role: "user", text: trimmed }]);
+
+    const response: QuestionResponse & { apiMode: ApiMode } = await askDocumentQuestion(
+      activeReport.document_id,
+      trimmed,
+    );
+    setApiMode(response.apiMode);
+    setMessages((current) => [
+      ...current,
+      {
+        role: "assistant",
+        text: response.answer,
+        insufficientEvidence: response.insufficient_evidence,
+        citationIds: response.citation_ids,
+        latencyMs: response.latency_ms,
+      },
+    ]);
+    setIsAsking(false);
   }
 
   useEffect(() => {
@@ -188,7 +255,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#fafaf4] text-[#1a1c19]">
       <div className="grid min-h-screen lg:grid-cols-[280px_minmax(0,1fr)_360px]">
-        <SideNav activeView={view} onChange={setView} />
+        <SideNav activeView={view} onChange={setView} onNewDocument={resetUpload} />
         <section className="flex min-h-screen flex-col border-r border-[#c4c7c7]/70">
           <TopBar
             title={activeTitle}
@@ -213,7 +280,18 @@ export default function Home() {
             {view === "report" && (
               <ReportWorkspace report={activeReport} onSelectCitation={handleSelectCitation} />
             )}
-            {view === "qa" && <PlaceholderPanel title="Q&A workspace" />}
+            {view === "qa" && (
+              <QaWorkspace
+                report={activeReport}
+                messages={messages}
+                question={question}
+                canAsk={canAsk}
+                isAsking={isAsking}
+                onQuestionChange={setQuestion}
+                onSubmit={handleAskQuestion}
+                onSelectCitation={handleSelectCitation}
+              />
+            )}
             <div className="mt-6 lg:hidden">
               <CitationViewer
                 report={activeReport}
@@ -242,9 +320,11 @@ export default function Home() {
 function SideNav({
   activeView,
   onChange,
+  onNewDocument,
 }: {
   activeView: ViewKey;
   onChange: (view: ViewKey) => void;
+  onNewDocument: () => void;
 }) {
   return (
     <aside className="border-r border-[#c4c7c7] bg-[#eeeee9] px-4 py-5 lg:min-h-screen">
@@ -254,7 +334,11 @@ function SideNav({
           Executive Intelligence
         </p>
       </div>
-      <Button className="mb-8 h-10 w-full rounded-lg bg-black text-white hover:bg-black/85">
+      <Button
+        type="button"
+        className="mb-8 h-10 w-full rounded-lg bg-black text-white hover:bg-black/85"
+        onClick={onNewDocument}
+      >
         <Plus className="size-4" />
         New Document
       </Button>
@@ -626,10 +710,102 @@ function CitationViewer({
   );
 }
 
-function PlaceholderPanel({ title }: { title: string }) {
+function QaWorkspace({
+  report,
+  messages,
+  question,
+  canAsk,
+  isAsking,
+  onQuestionChange,
+  onSubmit,
+  onSelectCitation,
+}: {
+  report: ReportResponse;
+  messages: ChatMessage[];
+  question: string;
+  canAsk: boolean;
+  isAsking: boolean;
+  onQuestionChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSelectCitation: (citationId: string) => void;
+}) {
   return (
-    <div className="rounded-lg border border-[#c4c7c7] bg-white p-6">
-      <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#444748]">{title}</p>
+    <div className="mx-auto flex min-h-[calc(100vh-130px)] max-w-3xl flex-col">
+      <div className="flex-1 space-y-8 pb-32">
+        <div className="flex justify-center">
+          <span className="rounded-full bg-[#f4f4ee] px-3 py-1 font-mono text-xs text-[#444748]">
+            Hôm nay, 09:41
+          </span>
+        </div>
+        {messages.map((message, index) =>
+          message.role === "user" ? (
+            <div key={`${message.role}-${index}`} className="flex justify-end">
+              <div className="max-w-[486px] rounded-bl-xl rounded-br-xl rounded-tl-xl rounded-tr-sm bg-[#e8e8e3] px-6 py-4">
+                <p className="leading-7">{message.text}</p>
+              </div>
+            </div>
+          ) : (
+            <div key={`${message.role}-${index}`} className="space-y-2">
+              <p className="flex items-center gap-2 pl-1 font-mono text-xs font-semibold uppercase tracking-[0.12em] text-[#444748]">
+                <MessageSquareText className="size-4" />
+                Antipaper AI
+              </p>
+              <div className="max-w-[560px] rounded-bl-xl rounded-br-xl rounded-tl-sm rounded-tr-xl border border-[#c4c7c7] bg-white px-6 py-5 shadow-sm">
+                <p className="leading-7">{message.text}</p>
+                {!message.insufficientEvidence && message.citationIds.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {message.citationIds.map((id) => (
+                      <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+                    ))}
+                  </div>
+                )}
+                {message.insufficientEvidence && (
+                  <Badge variant="outline" className="mt-4">
+                    Không đủ bằng chứng
+                  </Badge>
+                )}
+              </div>
+              <div className="flex gap-2 pl-1 text-[#444748]">
+                <button type="button" aria-label="Sao chép câu trả lời" className="p-1">
+                  <Copy className="size-4" />
+                </button>
+                <button type="button" aria-label="Hữu ích" className="p-1">
+                  <ThumbsUp className="size-4" />
+                </button>
+                <button type="button" aria-label="Không hữu ích" className="p-1">
+                  <ThumbsDown className="size-4" />
+                </button>
+              </div>
+            </div>
+          ),
+        )}
+      </div>
+      <form
+        onSubmit={onSubmit}
+        className="sticky bottom-0 bg-gradient-to-t from-[#fafaf4] via-[#fafaf4] to-transparent pb-6 pt-10"
+      >
+        <div className="flex items-end rounded-lg border border-[#c4c7c7] bg-white p-2 shadow-sm">
+          <textarea
+            value={question}
+            onChange={(event) => onQuestionChange(event.target.value)}
+            disabled={!canAsk || isAsking}
+            rows={1}
+            placeholder={canAsk ? "Đặt câu hỏi về tài liệu..." : "Tải và phân tích tài liệu trước khi hỏi..."}
+            className="min-h-12 flex-1 resize-none rounded-md border-0 bg-transparent px-3 py-3 outline-none disabled:cursor-not-allowed disabled:text-[#444748]/60"
+          />
+          <Button
+            type="submit"
+            disabled={!canAsk || isAsking || question.trim().length === 0}
+            className="h-11 rounded-md bg-[#d3e3b7] text-black hover:bg-[#c7d9a8]"
+            aria-label="Gửi câu hỏi"
+          >
+            <SendHorizontal className="size-5" />
+          </Button>
+        </div>
+        <p className="mt-3 text-center font-mono text-[11px] text-[#444748]/70">
+          AI có thể cung cấp thông tin không chính xác. Hãy kiểm chứng nguồn trích dẫn.
+        </p>
+      </form>
     </div>
   );
 }
