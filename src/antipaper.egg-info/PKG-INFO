@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: antipaper
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.100
+Requires-Dist: httpx>=0.25
+Requires-Dist: pydantic>=2.0
+Requires-Dist: PyMuPDF>=1.23
+Requires-Dist: python-docx>=1.1
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: uvicorn[standard]>=0.23
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"

@@ -1,215 +1,327 @@
-# Hợp đồng API v1
+# API Contract v1 — Antipaper
 
-**Base URL:** `/api/v1`
-**Content-Type:** JSON, riêng upload dùng `multipart/form-data`.
+## 1. Context
 
-Frontend có thể làm bằng mock ngay khi tài liệu này được chốt. Thay đổi field sau giờ 4 phải có đồng thuận của Hưng và Tùng.
+Base path: `/api/v1`  
+Media type: `application/json`, trừ upload `multipart/form-data`  
+Pagination hiện tại: `limit`/`offset`  
+Page number: số nguyên 1-based
 
-## 1. Upload tài liệu
+Contract này mô tả API đã có và bổ sung yêu cầu target tương thích. Field target chưa
+triển khai được đánh dấu **Target**. OpenAPI do FastAPI sinh là executable schema; CI
+phải kiểm tra nó không drift khỏi tài liệu này.
 
-`POST /documents`
+## 2. Problem Statement
 
-Form field: `file` — PDF hoặc DOCX, tối đa 25 MB.
+Frontend và backend hiện chia sẻ type bằng cách khai báo thủ công, nên có nguy cơ lệch
+stage/citation fields. Mặt khác `X-User-ID` chỉ là định danh demo, không phải cơ chế
+authentication. Contract phải ổn định cho hackathon nhưng công khai các giới hạn trước
+khi tích hợp pilot.
 
-Phản hồi `202`:
+## 3. Technical Deep-Dive
 
-```json
-{
-  "document_id": "sha256-prefix",
-  "status": "queued",
-  "cached": false
-}
-```
+### 3.1 Quy ước chung
 
-## 2. Theo dõi xử lý
+#### Headers
 
-`GET /documents/{document_id}/status`
+| Header | MVP hiện tại | Pilot target |
+|---|---|---|
+| `Content-Type` | JSON hoặc multipart | Giữ nguyên |
+| `X-User-ID` | Chuỗi client tự tạo; default `demo-user` | Loại bỏ khỏi trust decision |
+| `Authorization` | Chưa có | `Bearer <OIDC access token>` |
+| `X-Request-ID` | Chưa có | Optional từ client, server luôn trả correlation ID |
+| `Idempotency-Key` | Chưa có | Bắt buộc/khuyến nghị cho upload retry |
 
-```json
-{
-  "document_id": "sha256-prefix",
-  "status": "processing",
-  "stage": "summarizing",
-  "progress": 65,
-  "elapsed_seconds": 21.4,
-  "error": null
-}
-```
+Mọi document endpoint ở pilot phải authorize theo tenant/workspace/owner; biết UUID
+không đồng nghĩa có quyền truy cập.
 
-`status`: `queued | processing | completed | failed`.
-
-`error` là `null` khi tác vụ bình thường; khi thất bại, field này dùng cùng cấu
-trúc `{code, message, retryable}` như lỗi chuẩn ở mục 6 để frontend hiển thị và
-quyết định có cho phép thử lại hay không.
-
-## 3. Lấy báo cáo
-
-`GET /documents/{document_id}/report`
-
-```json
-{
-  "document_id": "sha256-prefix",
-  "file_name": "<tên-file-gốc>",
-  "page_count": 44,
-  "processing_seconds": 38.2,
-  "summary": {
-    "context": [{"text": "<một ý tổng hợp>", "citation_ids": ["P1-D1", "P3-D4"]}],
-    "main_content": [
-      {"text": "<luận điểm hoặc chủ đề thứ nhất>", "citation_ids": ["P3-D4", "P8-D2"]},
-      {"text": "<luận điểm hoặc chủ đề thứ hai>", "citation_ids": ["P12-D1"]}
-    ],
-    "decision_points": [{"text": "<một nội dung cần quyết định>", "citation_ids": ["P20-D12", "P21-D3"]}],
-    "impact": [{"text": "<một tác động hoặc rủi ro>", "citation_ids": ["P30-D18", "P32-D1"]}]
-  },
-  "terms": [
-    {
-      "term": "hệ thống thông tin quan trọng về an ninh quốc gia",
-      "explanation": "...",
-      "citation_ids": ["P5-D3"]
-    }
-  ],
-  "suggested_questions": [
-    {
-      "question": "...",
-      "rationale": "...",
-      "citation_ids": ["P12-D7"]
-    }
-  ],
-  "related_documents": [
-    {
-      "title": "...",
-      "document_number": "...",
-      "mentioned_name": "...",
-      "source": "tavily",
-      "reason": "...",
-      "citation_ids": ["P1-D2"],
-      "url": "https://example.gov.vn/van-ban",
-      "publisher": "example.gov.vn",
-      "excerpt": "..."
-    }
-  ],
-  "citations": {
-    "P12-D7": {
-      "page": 12,
-      "chapter": "Chương II",
-      "article": "Điều 7",
-      "clause": null,
-      "excerpt": "..."
-    }
-  }
-}
-```
-
-## 4. Hỏi đáp
-
-`POST /documents/{document_id}/questions`
-
-```json
-{"question": "Cơ quan nào chịu trách nhiệm thực hiện nội dung này?"}
-```
-
-Phản hồi:
-
-```json
-{
-  "answer": "...",
-  "insufficient_evidence": false,
-  "citation_ids": ["P18-D10"],
-  "latency_ms": 1450
-}
-```
-
-Nếu thiếu nguồn: `answer` nêu rõ không tìm thấy bằng chứng, `insufficient_evidence=true`, `citation_ids=[]`.
-
-## 5. Nội dung trang
-
-`GET /documents/{document_id}/pages/{page_number}`
-
-Trả text, block và `source_preview` optional để frontend mở đúng trang/vùng. Với PDF còn lưu file gốc, `source_preview` là ảnh PNG data URL của đúng trang, phục vụ kiểm chứng trực quan giữa excerpt và tài liệu thật; với DOCX hoặc artifact cũ thiếu file gốc, trường này có thể là `null`.
-
-```json
-{
-  "document_id": "sha256...",
-  "page_number": 12,
-  "text": "...",
-  "blocks": [{"kind": "text", "text": "...", "page_number": 12}],
-  "source_preview": {
-    "kind": "page_image",
-    "mime_type": "image/png",
-    "data_url": "data:image/png;base64,...",
-    "width": 804,
-    "height": 1137,
-    "page_number": 12
-  }
-}
-```
-
-Mỗi item trong `summary` là một ý tổng hợp độc lập được frontend hiển thị thành
-một gạch đầu dòng, không phải câu trích rời rạc. Tổng nội dung của bốn nhóm không
-vượt quá 800 từ và phải bao phủ các phần/chủ đề có ý nghĩa của toàn tài liệu.
-`citation_ids` của từng item chứa tối đa sáu đoạn nguồn trực tiếp đã được dùng;
-frontend gom các nguồn này dưới nút “Nguồn tóm tắt” và tải bản xem trang gốc của
-từng trang liên quan.
-
-`related_documents` chỉ chứa căn cứ trích được từ tài liệu. Khi có
-`TAVILY_API_KEY`, backend đối chiếu bằng Tavily Search và chỉ giữ URL thuộc miền
-`.gov.vn` hoặc `vnexpress.net`; `citation_ids` vẫn luôn trỏ về nơi căn cứ được nhắc
-trong tài liệu gốc. Nếu không có căn cứ, API trả mảng rỗng thay vì placeholder.
-
-## 6. Lỗi chuẩn
+#### Error envelope
 
 ```json
 {
   "error": {
-    "code": "UNSUPPORTED_FILE",
-    "message": "Chỉ hỗ trợ PDF hoặc DOCX.",
+    "code": "DOCUMENT_NOT_FOUND",
+    "message": "Document is no longer active. Upload it again to open its report.",
     "retryable": false
   }
 }
 ```
 
-Mã tối thiểu: `UNSUPPORTED_FILE`, `FILE_TOO_LARGE`, `DOCUMENT_NOT_FOUND`, `PROCESSING_FAILED`, `MODEL_TIMEOUT`, `INVALID_OUTPUT`.
+Không đưa stack trace, file content, provider response hoặc credential vào `message`.
 
-## 7. Quy tắc tương thích
+#### Status
 
-- Không đổi tên field đã chốt; field mới phải optional.
-- Citation ID phải tồn tại trong `citations`.
-- Thứ tự mảng là thứ tự hiển thị.
-- Text trả về là UTF-8 và giữ đúng dấu tiếng Việt.
+`DocumentStatus = queued | processing | completed | failed`
 
-## 8. Lịch sử lượt tác vụ
+Stage canonical target:
 
-Trong môi trường demo chưa có đăng nhập, client gửi định danh qua header
-`X-User-ID`. Nếu không gửi, backend dùng `demo-user` để giữ tương thích với luồng
-cũ. Header này chỉ là cơ chế phân vùng dữ liệu, không phải cơ chế xác thực; bản
-production phải lấy `user_id` từ access token đã được xác minh.
+```text
+queued | extracting | normalizing | indexing | generating |
+validating | ready | answering | failed
+```
 
-Mỗi lần upload tạo một `task_id` mới, kể cả khi cùng `document_id` và cache hit.
-Mỗi lần hỏi đáp cũng tạo một task độc lập. `task_id` được trả thêm trong response
-upload và question.
+MVP thực tế dùng `queued | parsing | generating | ready | failed`; client hiện còn
+khai báo một số stage chưa được backend phát. Field `stage` là extensible string, UI
+phải có fallback label.
 
-`GET /history?limit=20&offset=0&status=completed&task_type=document_processing`
+### 3.2 Endpoint catalog
 
-Các bộ lọc tùy chọn: `status`, `task_type`, `from_at`, `to_at`, `limit`, `offset`.
-Thời gian dùng ISO 8601; kết quả sắp xếp mới nhất trước.
+| Method | Path | Mục đích | Auth MVP | Thành công |
+|---|---|---|---|---|
+| GET | `/health` | Health/version/mode | Không | 200 |
+| POST | `/documents` | Upload và tạo task | `X-User-ID` | 202 |
+| GET | `/documents/{id}/status` | Poll trạng thái | Không owner-check | 200 |
+| GET | `/documents/{id}/report` | Lấy report | Không owner-check | 200 |
+| GET | `/documents/{id}/pages/{page}` | Xem nguồn | Không owner-check | 200 |
+| POST | `/documents/{id}/questions` | Hỏi đáp | `X-User-ID` | 200 |
+| GET | `/history` | Danh sách task | `X-User-ID` | 200 |
+| GET | `/history/{task_id}` | Chi tiết task | `X-User-ID` | 200 |
+| DELETE | `/history/{task_id}` | Xóa task history chưa gắn document | `X-User-ID` | 204 |
+| DELETE | `/history/sessions/{document_id}` | Xóa toàn bộ history của một phiên | `X-User-ID` | 204 |
+
+Thiếu owner-check là gap P0 trước pilot, không phải hành vi được khuyến nghị.
+
+### 3.3 Health
+
+#### `GET /api/v1/health`
+
+Response hiện tại:
+
+```json
+{
+  "status": "ok",
+  "service": "antipaper-backend",
+  "version": "0.1.0",
+  "llm_status": "enabled"
+}
+```
+
+**Target:** tách liveness và readiness; không trả `ready` nếu queue/DB bắt buộc không
+khả dụng. `llm_status` phải phản ánh provider/config thực sự dùng, không hard-code.
+
+### 3.4 Upload
+
+#### `POST /api/v1/documents`
+
+Request:
+
+```http
+Content-Type: multipart/form-data
+X-User-ID: web-<uuid>
+
+file=<PDF or DOCX bytes>
+```
+
+Constraints hiện tại:
+
+- extension `.pdf` hoặc `.docx`;
+- tối đa 25 MiB;
+- một file/request;
+- cùng bytes vẫn tạo document/task mới.
+
+Response `202 Accepted`:
+
+```json
+{
+  "document_id": "7d14b988-4e44-4f6a-9465-770e159d45b9",
+  "status": "queued",
+  "task_id": "22fc6140-39e8-493e-82bd-6296e1e9742f"
+}
+```
+
+Không suy luận report đã sẵn sàng từ HTTP 202. **Target:** hỗ trợ
+`Idempotency-Key` để network retry không nhân đôi task ngoài ý muốn; điều này khác với
+việc cố ý upload lại file giống nhau.
+
+### 3.5 Status
+
+#### `GET /api/v1/documents/{document_id}/status`
+
+```json
+{
+  "document_id": "7d14b988-4e44-4f6a-9465-770e159d45b9",
+  "status": "processing",
+  "stage": "parsing",
+  "progress": 15,
+  "elapsed_seconds": 1.284,
+  "error": null
+}
+```
+
+Rules:
+
+- `progress` trong `[0,100]`, dùng cho UX chứ không phải SLA guarantee.
+- Terminal `failed` có `error`; terminal `completed` không có error.
+- Client poll khoảng 2 giây, dừng tại terminal; production dùng exponential backoff/
+  jitter hoặc server events nếu cần.
+
+### 3.6 Report
+
+#### `GET /api/v1/documents/{document_id}/report`
+
+Precondition: document completed. MVP implementation có thể block chờ future tới
+deadline; target nên trả `409 REPORT_NOT_READY` thay vì giữ GET lâu.
+
+Schema rút gọn:
+
+```json
+{
+  "document_id": "uuid",
+  "file_name": "tai-lieu.pdf",
+  "page_count": 44,
+  "processing_seconds": 8.231,
+  "summary": {
+    "context": [
+      {"text": "…", "citation_ids": ["P1-D1"]}
+    ],
+    "main_content": [],
+    "decision_points": [],
+    "impact": []
+  },
+  "terms": [
+    {
+      "term": "an ninh mạng",
+      "explanation": "…",
+      "citation_ids": ["P2-D1"]
+    }
+  ],
+  "suggested_questions": [
+    {
+      "question": "…?",
+      "rationale": "…",
+      "citation_ids": ["P10-D1"]
+    }
+  ],
+  "related_documents": [],
+  "citations": {
+    "P1-D1": {
+      "page": 1,
+      "chapter": null,
+      "article": null,
+      "clause": null,
+      "excerpt": "…"
+    }
+  },
+  "generation_mode": "llm",
+  "quality": {
+    "pipeline": "llm_map_reduce",
+    "map_batch_count": 4,
+    "question_count": 5,
+    "summary_sections_complete": true,
+    "citations_valid": true,
+    "citation_count": 44
+  },
+  "enrichment_status": "not_configured"
+}
+```
+
+Rules:
+
+- Report phát hành luôn có `generation_mode = llm`; lỗi cấu hình/model/schema/citation trả document task trạng thái `failed`, không trả heuristic fallback.
+- `enrichment_status = not_configured | pending | completed | failed`.
+- Các `citation_ids` phải là key trong `citations`.
+- Terms tối đa 100 theo schema hiện tại.
+- `quality` mở rộng tương thích ngược với `pipeline`, `map_batch_count`, `question_count`, `summary_sections_complete` và `citations_valid`.
+- `processing_seconds` đo core report, không mặc nhiên bao gồm enrichment nền.
+
+### 3.7 Page source
+
+#### `GET /api/v1/documents/{document_id}/pages/{page_number}`
+
+```json
+{
+  "document_id": "uuid",
+  "page_number": 12,
+  "text": "Nội dung trang…",
+  "blocks": [
+    {"kind": "text", "text": "Nội dung trang…", "page_number": 12}
+  ],
+  "source_preview": {
+    "kind": "page_image",
+    "mime_type": "image/png",
+    "data_url": "data:image/png;base64,…",
+    "width": 714,
+    "height": 1010,
+    "page_number": 12
+  }
+}
+```
+
+MVP chỉ render preview cho PDF. **Target:** trả binary image endpoint hoặc signed URL
+thay cho data URL; cache private; kiểm authorization trên mỗi request.
+
+### 3.8 Questions
+
+#### `POST /api/v1/documents/{document_id}/questions`
+
+Request:
+
+```json
+{"question": "Điều 40 giao trách nhiệm cho cơ quan nào?"}
+```
+
+Question dài 1–4.000 ký tự.
+
+Response có evidence:
+
+```json
+{
+  "answer": "…",
+  "insufficient_evidence": false,
+  "citation_ids": ["P39-D1"],
+  "latency_ms": 12.4,
+  "task_id": "uuid"
+}
+```
+
+Response từ chối:
+
+```json
+{
+  "answer": "Không đủ thông tin trong tài liệu để trả lời.",
+  "insufficient_evidence": true,
+  "citation_ids": [],
+  "latency_ms": 1.8,
+  "task_id": "uuid"
+}
+```
+
+Invariant: `insufficient_evidence=true` kéo theo `citation_ids=[]`. Client không được
+gắn citation từ lượt trước hoặc từ retrieval debug.
+
+### 3.9 History
+
+#### `GET /api/v1/history`
+
+Query:
+
+| Field | Type | Default | Constraint |
+|---|---|---:|---|
+| `limit` | integer | 20 | 1–100 |
+| `offset` | integer | 0 | ≥0 |
+| `status` | enum | — | document status |
+| `task_type` | enum | — | `document_processing`/`question_answer` |
+| `from_at` | datetime | — | ISO 8601 |
+| `to_at` | datetime | — | ISO 8601 |
+
+Response:
 
 ```json
 {
   "items": [
     {
-      "task_id": "7a413d74-f909-4d0f-b1aa-34b5402e352f",
+      "task_id": "uuid",
       "task_type": "document_processing",
-      "document_id": "sha256",
-      "display_name": "bien-ban-hop.pdf",
+      "document_id": "uuid",
+      "display_name": "tai-lieu.pdf",
       "status": "completed",
       "stage": "ready",
       "progress": 100,
-      "cached": false,
-      "created_at": "2026-07-18T07:30:00Z",
-      "started_at": "2026-07-18T07:30:00Z",
-      "updated_at": "2026-07-18T07:30:21Z",
-      "completed_at": "2026-07-18T07:30:21Z",
-      "duration_seconds": 21.0,
+      "created_at": "2026-07-19T01:00:00Z",
+      "started_at": "2026-07-19T01:00:00Z",
+      "updated_at": "2026-07-19T01:00:08Z",
+      "completed_at": "2026-07-19T01:00:08Z",
+      "duration_seconds": 8.2,
       "error": null
     }
   ],
@@ -219,6 +331,52 @@ Thời gian dùng ISO 8601; kết quả sắp xếp mới nhất trước.
 }
 ```
 
-`GET /history/{task_id}` trả một lượt tác vụ. Backend luôn giới hạn truy vấn theo
-`X-User-ID`; task thuộc người dùng khác được trả như `HISTORY_NOT_FOUND` để không
-tiết lộ sự tồn tại của dữ liệu.
+History metadata còn sau restart không bảo đảm report còn active.
+
+#### `GET /api/v1/history/{task_id}`
+
+Trả một `TaskHistoryItem`; MVP query đã scope theo `X-User-ID`.
+
+#### `DELETE /api/v1/history/sessions/{document_id}`
+
+Xóa vĩnh viễn toàn bộ `TaskHistoryItem` có cùng `document_id`, được scope theo
+`X-User-ID`; trả `204 No Content`. Endpoint không xóa document/report đang active trong
+bộ nhớ. Nếu phiên không tồn tại hoặc không thuộc user, trả `404 HISTORY_NOT_FOUND`.
+
+#### `DELETE /api/v1/history/{task_id}`
+
+Xóa một task history độc lập chưa có `document_id`, được scope theo `X-User-ID`; trả
+`204 No Content`. UI dùng endpoint này cho task upload thất bại trước khi tạo document.
+
+### 3.10 Error matrix
+
+| HTTP | Code | Khi nào | Retryable |
+|---:|---|---|---:|
+| 400/422 | `VALIDATION_ERROR` | Request/header/body sai | Không |
+| 401 | `UNAUTHENTICATED` | Target: token thiếu/hết hạn | Sau đăng nhập |
+| 403 | `FORBIDDEN` | Target: không có quyền | Không |
+| 404 | `DOCUMENT_NOT_FOUND` | ID không active/không tồn tại | Không; upload lại |
+| 404 | `HISTORY_NOT_FOUND` | Task không thuộc user/không tồn tại | Không |
+| 409 | `PROCESSING_FAILED` | Report/page chưa có hoặc task lỗi | Tùy payload |
+| 409 | `QUALITY_GATE_FAILED` | Target: output không đạt | Không tự động |
+| 413 | `FILE_TOO_LARGE` | >25 MiB | Không |
+| 415 | `UNSUPPORTED_FILE` | Không phải PDF/DOCX | Không |
+| 504 | `MODEL_TIMEOUT` | Chờ processing quá deadline | Có |
+| 429 | `RATE_LIMITED` | Target: quota/concurrency | Có, kèm Retry-After |
+
+### 3.11 Compatibility policy
+
+- Thêm nullable field hoặc enum value mới: backward compatible; client phải ignore field
+  lạ và fallback enum lạ.
+- Xóa/đổi nghĩa field, đổi type, biến optional thành required: breaking; dùng `/api/v2`.
+- Error `code` là machine-readable và ổn định; `message` có thể đổi/localize.
+- OpenAPI snapshot và generated frontend client là CI gate.
+
+## 4. Strategic Recommendations
+
+1. Ưu tiên owner authorization cho mọi endpoint trước mọi feature pilot.
+2. Chuẩn hóa state/stage và quality schema; loại các string union trùng nhưng lệch giữa
+   Python và TypeScript.
+3. Bổ sung `section`/`point` vào public citation schema và test compatibility.
+4. Chuyển page preview khỏi base64 JSON khi triển khai lâu dài.
+5. Thêm request ID, idempotency, rate limit, `Retry-After` và audit correlation.

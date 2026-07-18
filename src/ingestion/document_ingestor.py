@@ -4,19 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from io import BytesIO
 from pathlib import Path
 import re
 from typing import Iterable
+import unicodedata
 
 import fitz
 
-from backend.intelligence.contracts import Citation, DocumentChunk, NormalizedDocument
-from backend.pipeline.processor import PdfProcessingPipeline, ProcessedDocument
-from backend.pipeline.stitcher import StitchedPage
+from ..intelligence.contracts import Citation, DocumentChunk, NormalizedDocument
 
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
-DEFAULT_YOLO_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "table_detect_yolov8.pt"
 
 
 class IngestionError(RuntimeError):
@@ -36,12 +35,15 @@ class IngestionOptions:
     """Runtime options for the document ingestor."""
 
     max_file_size_bytes: int = MAX_FILE_SIZE_BYTES
-    use_yolo_tables: bool = False
-    require_yolo_weights: bool = False
-    yolo_model_path: Path = DEFAULT_YOLO_MODEL_PATH
-    yolo_confidence: float = 0.25
-    render_scale: float = 2.0
     max_pages: int | None = None
+
+
+@dataclass(frozen=True)
+class StitchedPage:
+    """Native text and table content extracted from one document page."""
+
+    page_number: int
+    content: str
 
 
 @dataclass
@@ -71,14 +73,13 @@ class _LogicalUnit:
 class DocumentIngestor:
     """Load PDF/DOCX files into `NormalizedDocument`.
 
-    The ingestor is deterministic and does not call any LLM. PDF ingestion keeps
-    using the YOLOv8 table path when weights are available, with a native
-    PyMuPDF fallback for CI and local machines that have not downloaded weights.
+    The ingestor is deterministic, does not call any LLM, and reads only native
+    document content through PyMuPDF or python-docx.
     """
 
-    _chapter_pattern = re.compile(r"^\s*(CHƯƠNG|CHUONG|Chương|Chuong)\s+([IVXLCDM\d]+)\b.*", re.IGNORECASE)
-    _section_pattern = re.compile(r"^\s*(MỤC|MUC|Mục|Muc)\s+(\d+[a-zA-Z]?)\b.*", re.IGNORECASE)
-    _article_pattern = re.compile(r"^\s*(ĐIỀU|DIEU|Điều|Dieu)\s+(\d+[a-zA-Z]?)\b[.:]?\s*(.*)", re.IGNORECASE)
+    _chapter_pattern = re.compile(r"^\s*(CHƯƠNG|CHUONG)\s+([IVXLCDM\d]+)\b.*", re.IGNORECASE)
+    _section_pattern = re.compile(r"^\s*(MỤC|MUC)\s+(\d+[a-zA-Z]?)\b.*", re.IGNORECASE)
+    _article_pattern = re.compile(r"^\s*(ĐIỀU|DIEU)\s+(\d+[a-zA-Z]?)\b[.:]?\s*(.*)", re.IGNORECASE)
     _clause_pattern = re.compile(r"^\s*((?:Khoản|Khoan)\s+\d+|\d+\.)\s+.*", re.IGNORECASE)
     _point_pattern = re.compile(r"^\s*([a-zA-ZđĐ])\)\s+.*")
 
@@ -106,6 +107,35 @@ class DocumentIngestor:
             citations=citations,
         )
 
+    def ingest_bytes(
+        self,
+        *,
+        file_name: str,
+        file_bytes: bytes,
+        document_id: str,
+    ) -> tuple[NormalizedDocument, list[StitchedPage]]:
+        """Ingest an upload directly from bytes without retaining a source file."""
+        suffix = Path(file_name).suffix.lower()
+        if len(file_bytes) > self.options.max_file_size_bytes:
+            raise FileTooLargeError("File exceeds the 25 MB upload limit.")
+        if suffix == ".pdf":
+            pages = self._load_pdf_bytes(file_bytes)
+        elif suffix == ".docx":
+            pages = self._load_docx_bytes(file_bytes)
+        else:
+            raise UnsupportedFileError("Only PDF and DOCX files are supported.")
+        chunks, citations = self._build_chunks_and_citations(pages)
+        return (
+            NormalizedDocument(
+                document_id=document_id,
+                file_name=file_name,
+                page_count=max((page.page_number for page in pages), default=1),
+                chunks=chunks,
+                citations=citations,
+            ),
+            pages,
+        )
+
     def _validate_file(self, path: Path) -> None:
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
@@ -115,24 +145,11 @@ class DocumentIngestor:
             raise UnsupportedFileError("Chỉ hỗ trợ PDF hoặc DOCX.")
 
     def _load_pdf_pages(self, path: Path) -> list[StitchedPage]:
-        if self.options.use_yolo_tables:
-            if self.options.yolo_model_path.exists():
-                processed = PdfProcessingPipeline(
-                    model_path=self.options.yolo_model_path,
-                    confidence_threshold=self.options.yolo_confidence,
-                    render_scale=self.options.render_scale,
-                ).process(path, max_pages=self.options.max_pages)
-                return processed.stitched_pages
-            if self.options.require_yolo_weights:
-                raise IngestionError(
-                    f"YOLOv8 weights not found: {self.options.yolo_model_path}"
-                )
+        return self._load_pdf_bytes(path.read_bytes())
 
-        return self._load_pdf_pages_native(path)
-
-    def _load_pdf_pages_native(self, path: Path) -> list[StitchedPage]:
+    def _load_pdf_bytes(self, file_bytes: bytes) -> list[StitchedPage]:
         pages: list[StitchedPage] = []
-        with fitz.open(path) as document:
+        with fitz.open(stream=file_bytes, filetype="pdf") as document:
             page_limit = min(self.options.max_pages or document.page_count, document.page_count)
             for page_index in range(page_limit):
                 page = document[page_index]
@@ -142,7 +159,7 @@ class DocumentIngestor:
                 pages.append(
                     StitchedPage(
                         page_number=page_index + 1,
-                        content="\n\n".join(content_parts),
+                    content=self._normalize_unicode("\n\n".join(content_parts)),
                     )
                 )
         return pages
@@ -162,12 +179,15 @@ class DocumentIngestor:
         return "\n\n".join(markdown_tables)
 
     def _load_docx_pages(self, path: Path) -> list[StitchedPage]:
+        return self._load_docx_bytes(path.read_bytes())
+
+    def _load_docx_bytes(self, file_bytes: bytes) -> list[StitchedPage]:
         try:
             from docx import Document
         except ImportError as exc:
             raise IngestionError("python-docx is required for DOCX ingestion.") from exc
 
-        document = Document(path)
+        document = Document(BytesIO(file_bytes))
         parts: list[str] = []
         parts.extend(paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip())
         for table in document.tables:
@@ -250,7 +270,7 @@ class DocumentIngestor:
         return units
 
     def _update_section_state(self, text: str, state: _SectionState) -> bool:
-        first_line = text.splitlines()[0].strip()
+        first_line = self._normalize_unicode(text).splitlines()[0].strip()
         chapter_match = self._chapter_pattern.match(first_line)
         if chapter_match:
             state.chapter = first_line
@@ -290,7 +310,7 @@ class DocumentIngestor:
 
     @staticmethod
     def _split_content(content: str) -> list[str]:
-        normalized = re.sub(r"\r\n?", "\n", content or "")
+        normalized = DocumentIngestor._normalize_unicode(re.sub(r"\r\n?", "\n", content or ""))
         paragraphs = [
             re.sub(r"\s+", " ", paragraph).strip()
             for paragraph in re.split(r"\n{2,}", normalized)
@@ -303,6 +323,10 @@ class DocumentIngestor:
                 if line.strip()
             ]
         return [paragraph for paragraph in paragraphs if len(paragraph) >= 3]
+
+    @staticmethod
+    def _normalize_unicode(value: str) -> str:
+        return unicodedata.normalize("NFC", value or "")
 
     @staticmethod
     def _rows_to_markdown(rows: list[list[str | None]]) -> str:

@@ -5,6 +5,7 @@ from .document_ingestor import (
     FileTooLargeError,
     IngestionError,
     IngestionOptions,
+    StitchedPage,
     UnsupportedFileError,
     ingest_document,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "FileTooLargeError",
     "IngestionError",
     "IngestionOptions",
+    "StitchedPage",
     "UnsupportedFileError",
     "ingest_document",
 ]

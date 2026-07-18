@@ -1,162 +1,139 @@
-﻿# Antipaper
+# Antipaper
 
-Trá»£ lÃ½ AI giÃºp cÃ¡n bá»™ Ä‘á»c nhanh tÃ i liá»‡u há»p dÃ i, chuáº©n bá»‹ cÃ¢u há»i vÃ  tra cá»©u báº±ng tiáº¿ng Viá»‡t vá»›i citation Ä‘áº¿n trang/má»¥c/Ä‘iá»u.
-<img width="1939" height="4097" alt="mermaid-diagram-2026-07-18-075329" src="https://github.com/user-attachments/assets/e50b2b98-9fe2-4cdd-8f85-1cd4eb7334f4" />
+Antipaper là ứng dụng **FastAPI (backend) + React/Vite (frontend)** cho việc trích xuất PDF/DOCX
+gốc (không OCR), sinh báo cáo có dẫn chứng, hỏi–đáp trích dẫn theo từ khóa, và tùy chọn làm giàu
+tài liệu liên quan chạy nền.
 
-## Tráº¡ng thÃ¡i hiá»‡n táº¡i
+- Backend: `src/` — API tại `http://127.0.0.1:8000`
+- Frontend: `frontend/` — dashboard tại `http://localhost:5173`
 
-Kho mÃ£ nguá»“n Ä‘ang á»Ÿ má»©c khung ká»¹ thuáº­t:
+## Kiến trúc & cách các thành phần nối với nhau
 
-- Da co luong PDF bang PyMuPDF, FastAPI backend va giao dien Next.js tich hop.
-- ÄÃ£ cÃ³ FastAPI job/cache, canonical document contract, grounded Q&A vÃ  citation cáº¥p trang/má»¥c/Ä‘iá»u.
-- Report dÃ¹ng LLM map-reduce khi cáº¥u hÃ¬nh model; heuristic chá»‰ lÃ  fallback cÃ³ gáº¯n nhÃ£n vÃ  khÃ´ng Ä‘Æ°á»£c qua release gate.
-- ÄÃ£ cÃ³ benchmark deterministic vÃ  DeepEval; semantic embedding vÃ  DOCX production váº«n lÃ  háº¡ng má»¥c tiáº¿p theo.
-- Kho `data/` Ä‘Ã£ cÃ³ nhiá»u PDF tá»« 40 trang; tÃ i liá»‡u demo Ä‘Æ°á»£c chá»n qua `DEMO_DOCUMENT_PATH`, khÃ´ng phá»¥ thuá»™c tÃªn file.
-
-Xem tráº¡ng thÃ¡i chi tiáº¿t táº¡i [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGRESS.md).
-
-## TÃ i liá»‡u lÃ m viá»‡c
-
-| TÃ i liá»‡u | Má»¥c Ä‘Ã­ch |
-|---|---|
-| [problem.txt](problem.txt) | Äá» bÃ i vÃ  pháº¡m vi sáº£n pháº©m |
-| [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) | NgÆ°á»i dÃ¹ng, yÃªu cáº§u vÃ  pháº¡m vi MVP |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiáº¿n trÃºc xá»­ lÃ½ vÃ  quyáº¿t Ä‘á»‹nh ká»¹ thuáº­t |
-| [docs/TECH_STACK.md](docs/TECH_STACK.md) | NgÄƒn xáº¿p cÃ´ng nghá»‡ dÃ¹ng trong 48 giá» |
-| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Há»£p Ä‘á»“ng tÃ­ch há»£p backendâ€“frontend |
-| [docs/BUILD_PLAN_48H.md](docs/BUILD_PLAN_48H.md) | Timeline, má»‘c khÃ³a vÃ  phÆ°Æ¡ng Ã¡n dá»± phÃ²ng |
-| [docs/ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | CÃ¡ch kiá»ƒm chá»©ng tiÃªu chÃ­ ná»™p bÃ i |
-| [docs/AI_COLLABORATION_LOG.md](docs/AI_COLLABORATION_LOG.md) | Nháº­t kÃ½ vÃ  báº±ng chá»©ng cá»™ng tÃ¡c vá»›i cÃ¡c cÃ´ng cá»¥ AI |
-| [docs/ONE_PAGE_DECK.md](docs/ONE_PAGE_DECK.md) | Ná»™i dung deck má»™t trang |
-| `docs/TASKS_*.md` | Viá»‡c cá»¥ thá»ƒ cá»§a tá»«ng thÃ nh viÃªn |
-
-## PhÃ¢n cÃ´ng 5 ngÆ°á»i
-
-| ThÃ nh viÃªn | Máº£ng phá»¥ trÃ¡ch | Chi tiáº¿t |
-|---|---|---|
-| Háº­u | TÃ³m táº¯t, thuáº­t ngá»¯, cÃ¢u há»i AI vÃ  OCR fallback | [TASKS_HAU.md](docs/TASKS_HAU.md) |
-| Tuáº¥n | Nháº­p PDF/DOCX, parse cáº¥u trÃºc, citation vÃ  LLM client | [TASKS_TUAN.md](docs/TASKS_TUAN.md) |
-| TÃ¹ng | Giao diá»‡n, tÃ­ch há»£p, benchmark nghiá»‡m thu, demo vÃ  deck | [TASKS_TUNG.md](docs/TASKS_TUNG.md) |
-| TÃ¹ng Anh | Truy há»“i, Q&A, vÄƒn báº£n liÃªn quan, kiá»ƒm tra citation | [TASKS_TUNG_ANH.md](docs/TASKS_TUNG_ANH.md) |
-| HÆ°ng | FastAPI, job/cache, xá»­ lÃ½ bottleneck runtime vÃ  Ä‘Ã³ng gÃ³i backend | [TASKS_HUNG.md](docs/TASKS_HUNG.md) |
-
-## Cáº¥u trÃºc chÃ­nh
-
-```text
-Antipaper/
-├── backend/              # FastAPI, orchestration, pipeline, intelligence, retrieval
-├── data/                 # PDF mau cong khai
-├── docs/                 # Kien truc, ke hoach, kiem thu va task
-├── evals/                # Release dataset, adapters va DeepEval suite
-├── evidence/             # Ket qua benchmark co truy vet
-├── frontend/             # Next.js dashboard
-└── scripts/              # Script demo/benchmark
+```
+Trình duyệt ──► Vite (:5173, development) ──proxy /api/v1/*──► FastAPI (:8000) ──► Xử lý trong tiến trình
 ```
 
-## Cháº¡y tÃ­ch há»£p backend vÃ  frontend
+- Frontend gọi đường dẫn tương đối `/api/v1/...` ([frontend/src/lib/antipaper-api.ts](frontend/src/lib/antipaper-api.ts)).
+- Vite development server **proxy** các request đó sang backend qua
+  [frontend/vite.config.ts](frontend/vite.config.ts). Đích proxy lấy từ biến môi trường
+  `ANTIPAPER_BACKEND_URL` (mặc định `http://127.0.0.1:8000`).
+- Nhờ proxy này, trình duyệt gọi cùng origin nên không phụ thuộc CORS khi chạy local.
 
-YÃªu cáº§u Python 3.12 vÃ  Node.js 20+. Cá»­a sá»• PowerShell thá»© nháº¥t:
+## Yêu cầu môi trường
+
+- **Python 3.11+** (khuyến nghị 3.12)
+- **Node.js 20+** (frontend dùng Vite 7 / React 19)
+
+## Chạy backend
+
+Chạy từ **thư mục gốc của repo** (lệnh `python -m src` cần thư mục gốc để import package `src`):
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env
-.\scripts\run_backend.ps1 -Reload
+.\.venv\Scripts\python.exe -m src --reload
 ```
 
-Backend Ä‘á»c `.env` khi khá»Ÿi Ä‘á»™ng vÃ  phá»¥c vá»¥ táº¡i `http://127.0.0.1:8000`. KhÃ´ng cÃ³
-`LLM_API_KEY`, pipeline váº«n cháº¡y báº±ng `heuristic_fallback` vÃ  frontend sáº½ cáº£nh bÃ¡o
-rÃµ Ä‘Ã¢y lÃ  káº¿t quáº£ dá»± phÃ²ng.
+Tham số hỗ trợ: `--host` (mặc định `127.0.0.1`), `--port` (mặc định `8000`), `--reload`,
+`--log-level`. Uvicorn nạp app `src.main:app`.
 
-Kiểm tra backend:
+Kiểm tra nhanh backend đã sống:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+curl http://127.0.0.1:8000/health
+# {"status":"ok","service":"antipaper-backend","version":"0.1.0","llm_status":"..."}
 ```
 
-Trên Linux dùng file requirements riêng để tránh wheel Windows/CUDA. `app.py`
-được giữ như giao diện Streamlit tham chiếu, trong khi giao diện sản phẩm chính
-vẫn là Next.js trong thư mục `frontend`:
+Tài liệu API tương tác: `http://127.0.0.1:8000/docs`.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-linux.txt
-python download_yolo_table_weights.py
-streamlit run app.py
-```
+## Chạy frontend
 
-Nếu dùng Ubuntu/Debian và cần `pdf2image`, cài thêm Poppler:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y poppler-utils
-```
-
-Cá»­a sá»• PowerShell thá»© hai:
+Ở terminal thứ hai:
 
 ```powershell
 Set-Location frontend
-npm ci
-npm run dev
+npm.cmd ci
+npm.cmd run dev
 ```
 
-Má»Ÿ `http://localhost:3000`. Next.js chuyá»ƒn tiáº¿p `/api/v1/*` sang backend, vÃ¬ váº­y
-trÃ¬nh duyá»‡t khÃ´ng cáº§n cáº¥u hÃ¬nh URL API hoáº·c xá»­ lÃ½ CORS. Äá»ƒ dÃ¹ng backend khÃ¡c:
+Nếu backend chạy ở host/port khác, đặt trước khi `npm run dev`:
 
 ```powershell
-$env:ANTIPAPER_BACKEND_URL="http://127.0.0.1:9000"
-npm run dev
+$env:ANTIPAPER_BACKEND_URL = "http://127.0.0.1:8000"
 ```
 
-`requirements.txt` á»Ÿ thÆ° má»¥c gá»‘c lÃ  mÃ´i trÆ°á»ng Ä‘áº§y Ä‘á»§ cho GPU NVIDIA, OCR vÃ 
-DeepEval; khÃ´ng cáº§n cÃ i gÃ³i náº·ng nÃ y chá»‰ Ä‘á»ƒ cháº¡y vertical slice web. LuÃ´n gá»i pip
-qua `python -m pip` sau khi kÃ­ch hoáº¡t `.venv` Ä‘á»ƒ trÃ¡nh cÃ i nháº§m vÃ o Python há»‡ thá»‘ng.
+## Biến môi trường (`.env`)
 
-## GÃ³i deploy backend
+Sao chép từ [.env.example](.env.example). Không commit bí mật.
+
+| Biến | Vai trò |
+|---|---|
+| `OPENAI_API_KEY` / `LLM_API_KEY` | Khóa LLM bắt buộc để phát hành báo cáo. Thiếu khóa làm document task thất bại (`llm_status: disabled`). |
+| `LLM_BASE_URL`, `LLM_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS` | Cấu hình endpoint/model/giới hạn một lượt gọi LLM. |
+| `LLM_MAP_BATCH_CHARS`, `LLM_MAP_CONCURRENCY` | Ngân sách batch và số map request đồng thời của pipeline tổng hợp phân tầng. |
+| `PROCESSING_DEADLINE_SECONDS` | Hạn xử lý mỗi tài liệu (mặc định 48s). |
+| `HISTORY_DB_PATH` | SQLite lưu lịch sử tác vụ (mặc định `.runtime/history.sqlite3`). |
+| `TAVILY_*`, `RELATED_DOCUMENT_MAX_REFERENCES` | Làm giàu tài liệu liên quan chạy nền (tùy chọn). |
+| `FRONTEND_ORIGIN` | Origin frontend cho cấu hình CORS. |
+
+## Mô hình runtime
+
+- Mỗi lần upload nhận một UUID mới và được xử lý từ bytes; file trùng nhau **không** dùng lại kết quả.
+- Tài liệu, payload báo cáo, preview trang và chỉ mục từ khóa chỉ tồn tại trong bộ nhớ tiến trình.
+- SQLite tại `.runtime/history.sqlite3` **chỉ** lưu lịch sử tác vụ. Sau khi khởi động lại, lịch sử
+  vẫn hiển thị nhưng muốn xem lại báo cáo cũ thì phải upload lại.
+- File scan/chỉ-có-OCR nằm ngoài phạm vi hỗ trợ (cố ý).
+
+## API v1 (được frontend proxy dưới `/api/v1`)
+
+| Method & path | Chức năng |
+|---|---|
+| `GET /health`, `GET /api/v1/health` | Kiểm tra sức khỏe + trạng thái LLM |
+| `POST /api/v1/documents` | Upload tài liệu (trả `202`, kèm `document_id`) |
+| `GET /api/v1/documents/{id}/status` | Trạng thái xử lý |
+| `GET /api/v1/documents/{id}/report` | Báo cáo có dẫn chứng |
+| `POST /api/v1/documents/{id}/questions` | Hỏi–đáp trích dẫn |
+| `GET /api/v1/documents/{id}/pages/{n}` | Preview một trang |
+| `GET /api/v1/history`, `GET /api/v1/history/{task_id}` | Lịch sử tác vụ |
+
+## Kiểm thử & chất lượng
 
 ```powershell
-.\scripts\package_backend.ps1
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check src tests
+Set-Location frontend; npm.cmd run lint; npm.cmd run build
+.\.venv\Scripts\python.exe scripts\benchmark_cold.py data\03.pdf
 ```
 
-Bundle Ä‘áº§u ra máº·c Ä‘á»‹nh náº±m á»Ÿ `.artifacts\antipaper-backend.zip`.
+> **Lưu ý Windows:** nếu `pytest` báo `PermissionError [WinError 5]` khi tạo thư mục tạm, chỉ định
+> nơi ghi được: `python -m pytest -q --basetemp .runtime\pytest`.
 
-## Cháº¡y evaluation benchmark
+## Cấu trúc thư mục
 
-PR gate khÃ´ng gá»i LLM judge vÃ  cÃ³ thá»ƒ cháº¡y offline:
-
-```powershell
-python -m pytest
-python -m evals.run --suite smoke --output evidence/benchmark-smoke.json
+```
+src/            # Backend FastAPI (chạy bằng `python -m src`)
+  main.py         # Khai báo app + route
+  cli.py          # Entrypoint uvicorn (src.main:app)
+  services/       # orchestrator, documents
+  ingestion/      # Trích xuất PDF/DOCX
+  intelligence/   # Contracts + map-reduce LLM; thuật ngữ heuristic cục bộ
+  retrieval/      # Chỉ mục từ khóa, Q&A, citation
+  persistence/    # Lịch sử SQLite
+  integrations/   # LLM, Tavily
+frontend/       # Dashboard React/Vite
+scripts/        # benchmark_cold.py
+evals/          # Bộ đo benchmark (xem ghi chú bên dưới)
+data/           # PDF mẫu
+docs/           # Đặc tả sản phẩm/kiến trúc (PRD.md, README.md)
 ```
 
-Release gate dÃ¹ng pipeline tháº­t vÃ  DeepEval 4.1.0. Cáº§n cáº¥u hÃ¬nh
-`DEMO_DOCUMENT_PATH`, `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_API_KEY` vÃ 
-`EVAL_JUDGE_MODEL`; judge máº·c Ä‘á»‹nh lÃ  `gpt-5.4`, temperature 0.
+## Ghi chú kỹ thuật
 
-```powershell
-python -m pip install -r requirements.txt
-python -m evals.run --suite full --output evidence/benchmark.json
-$env:PYTHONIOENCODING="utf-8" # cáº§n cho Rich/DeepEval trÃªn Windows
-deepeval test run evals/tests
-```
+- Package backend là `src` (import tuyệt đối `src.` và import tương đối trong package). Phải chạy
+  các lệnh Python từ thư mục gốc repo.
+- `evals/run.py` hiện **còn hỏng** độc lập với việc đóng gói: nó import `evaluate_golden_set` và
+  `load_golden_cases` từ `src.retrieval`, nhưng module golden đã bị gỡ nên hai hàm này không còn
+  tồn tại. Cần khôi phục/viết lại golden set trước khi dùng lại runner này.
 
-Dataset release á»Ÿ `evals/datasets/demo_v1.jsonl`. Bá»™ deterministic tÃ¡i sá»­ dá»¥ng
-`backend/retrieval/golden.py`; khÃ´ng cÃ³ evaluator golden thá»© hai. Cháº¿ Ä‘á»™
-`heuristic_fallback` chá»‰ giá»¯ kháº£ dá»¥ng runtime vÃ  khÃ´ng Ä‘Æ°á»£c phÃ©p qua release
-gate. Thá»i gian judge khÃ´ng Ä‘Æ°á»£c tÃ­nh vÃ o latency cá»§a pipeline.
-
-## Logging an toÃ n
-
-- Backend chá»‰ log method, path, status, duration vÃ  content-length.
-- KhÃ´ng log toÃ n vÄƒn tÃ i liá»‡u upload.
-- KhÃ´ng log API key, token hoáº·c giÃ¡ trá»‹ secret-like trong message.
-
-## Quy táº¯c lÃ m viá»‡c 48 giá»
-
-- Chá»‘t schema vÃ  API trÆ°á»›c khi chia nhÃ¡nh.
-- Má»—i nhiá»‡m vá»¥ cÃ³ Ä‘iá»u kiá»‡n hoÃ n thÃ nh vÃ  báº±ng chá»©ng cháº¡y Ä‘Æ°á»£c.
-- Merge theo lÃ¡t cáº¯t end-to-end; khÃ´ng chá» Ä‘áº¿n cuá»‘i má»›i tÃ­ch há»£p.
-- Sau giá» 32 chá»‰ sá»­a lá»—i P0/P1 vÃ  hoÃ n thiá»‡n demo.
+Xem thêm `docs/PRD.md` và `docs/README.md` cho phạm vi sản phẩm, hợp đồng API và tiêu chí phát hành.

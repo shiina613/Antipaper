@@ -1,0 +1,16 @@
+# Runtime dependencies (aligned with pyproject.toml)
+fastapi>=0.100
+httpx>=0.25
+pydantic>=2.0
+PyMuPDF>=1.23
+python-docx>=1.1
+python-dotenv>=1.0
+python-multipart>=0.0.9
+uvicorn[standard]>=0.23
+
+# Development and quality checks
+pytest>=8
+ruff>=0.8
+
+# Manual/nightly release evaluation in evals/
+deepeval==4.1.0

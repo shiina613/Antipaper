@@ -1,4 +1,4 @@
-BÀI TOÁN: TRỢ LÝ AI CHUẨN BỊ HỌP CẤP TỈNH
+BÀI TOÁN: TRỢ LÝ AI GIẢI PHÁP CHO VIỆC QUÁ TẢI TÀI LIỆU, TÓM TẮT TÀI LIỆU CHUẨN BỊ CHO CUỘC HỌP
 
 1. Bối cảnh
 
@@ -8,7 +8,7 @@ BÀI TOÁN: TRỢ LÝ AI CHUẨN BỊ HỌP CẤP TỈNH
 
 2. Người dùng chính
 
-- Lãnh đạo, cán bộ tham mưu và thư ký cuộc họp tại UBND cấp tỉnh.
+- Lãnh đạo, cán bộ tham mưu và thư ký cuộc họp tại UBND cấp tỉnh, bất cứ ai cần đọc rất nhiều tài liệu trước khi họp
 - Nhu cầu cốt lõi: hiểu nhanh, kiểm chứng được nguồn và tra cứu ngay trong cuộc họp.
 
 3. Sản phẩm cần xây dựng

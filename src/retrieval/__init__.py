@@ -1,4 +1,11 @@
-"""Compatibility exports for code that still imports the legacy src package."""
+"""Lexical retrieval and grounded extractive Q&A primitives."""
 
-from backend.retrieval import *  # noqa: F403
-from backend.retrieval import __all__
+from .citations import CitationValidation, render_citations, validate_citations
+from .index import RetrievalIndex, RetrievalResult, build_index, build_index_async, meaningful_tokens
+from .qa import GroundedAnswer, GroundedQAService, answer
+
+__all__ = [
+    "CitationValidation", "GroundedAnswer", "GroundedQAService", "RetrievalIndex",
+    "RetrievalResult", "answer", "build_index", "build_index_async", "meaningful_tokens",
+    "render_citations", "validate_citations",
+]

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import hashlib
 from pathlib import Path
 
-from backend.intelligence import NormalizedDocument
-from backend.orchestrator import DocumentOrchestrator, OrchestrationResult, QuestionTrace
-from backend.retrieval import RetrievalIndex
+from src.intelligence import NormalizedDocument
+from src.services.orchestrator import DocumentOrchestrator, OrchestrationResult, ProcessedDocument, QuestionTrace
+from src.retrieval import RetrievalIndex
 
 
 @dataclass
@@ -19,6 +20,7 @@ class BenchmarkApplication:
     orchestrator: DocumentOrchestrator
     document: NormalizedDocument
     index: RetrievalIndex
+    processed_document: ProcessedDocument
 
     @classmethod
     def from_path(
@@ -31,10 +33,17 @@ class BenchmarkApplication:
         payload = source.read_bytes()
         document_id = hashlib.sha256(payload).hexdigest()
         orchestrator = DocumentOrchestrator(use_configured_llm=use_configured_llm)
-        _, document = orchestrator.ingest(
+        document, pages = orchestrator.ingest(
             document_id=document_id,
             file_name=source.name,
             file_bytes=payload,
+        )
+        processed_document = ProcessedDocument(
+            source_name=source.name,
+            page_count=document.page_count,
+            stitched_pages=pages,
+            normalized_document=document,
+            chunks=list(document.chunks),
         )
         return cls(
             path=source,
@@ -43,10 +52,11 @@ class BenchmarkApplication:
             orchestrator=orchestrator,
             document=document,
             index=orchestrator.build_retrieval_index(document),
+            processed_document=processed_document,
         )
 
     def answer(self, question: str) -> QuestionTrace:
-        return self.orchestrator.answer_question(self.index, question)
+        return asyncio.run(self.orchestrator.answer_question_async(self.processed_document, question, self.index))
 
     def generate_report(self) -> OrchestrationResult:
         return self.orchestrator.process(
