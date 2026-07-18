@@ -23,13 +23,10 @@ from .schemas import (
     StatusResponse,
     UploadResponse,
 )
-from .service import AntipaperService
+from .service import AntipaperService, runtime_upload_limit_bytes
 from . import __version__
 
 load_dotenv()
-
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
-
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -136,8 +133,11 @@ async def _extract_upload(request: Request) -> tuple[str, bytes]:
 
 async def _read_stream_body(request: Request) -> bytes:
     chunks = bytearray()
+    upload_limit = runtime_upload_limit_bytes()
     async for chunk in request.stream():
         chunks.extend(chunk)
+        if len(chunks) > upload_limit:
+            raise _file_too_large(upload_limit)
     return bytes(chunks)
 
 
@@ -153,6 +153,7 @@ async def _read_multipart_file(request: Request, boundary: str) -> tuple[str, by
     seen_headers = False
     file_stream = SpooledTemporaryFile(max_size=1_048_576)
     file_size = 0
+    upload_limit = runtime_upload_limit_bytes()
 
     async for chunk in request.stream():
         buffer.extend(chunk)
@@ -198,14 +199,9 @@ async def _read_multipart_file(request: Request, boundary: str) -> tuple[str, by
             file_bytes = bytes(buffer[:split_index].rstrip(b"\r\n"))
             file_stream.write(file_bytes)
             file_size += len(file_bytes)
-            if file_size > MAX_UPLOAD_BYTES:
+            if file_size > upload_limit:
                 file_stream.close()
-                raise ApiError(
-                    code="FILE_TOO_LARGE",
-                    message="File too large. Maximum size is 25 MB.",
-                    status_code=413,
-                    retryable=False,
-                )
+                raise _file_too_large(upload_limit)
             file_stream.seek(0)
             return file_name, file_stream.read()
 
@@ -214,32 +210,31 @@ async def _read_multipart_file(request: Request, boundary: str) -> tuple[str, by
             file_chunk = bytes(buffer[:safe_write_upto])
             file_stream.write(file_chunk)
             file_size += len(file_chunk)
-            if file_size > MAX_UPLOAD_BYTES:
+            if file_size > upload_limit:
                 file_stream.close()
-                raise ApiError(
-                    code="FILE_TOO_LARGE",
-                    message="File too large. Maximum size is 25 MB.",
-                    status_code=413,
-                    retryable=False,
-                )
+                raise _file_too_large(upload_limit)
             del buffer[:safe_write_upto]
 
     if seen_headers:
         file_chunk = bytes(buffer.rstrip(b"\r\n"))
         file_stream.write(file_chunk)
         file_size += len(file_chunk)
-        if file_size > MAX_UPLOAD_BYTES:
+        if file_size > upload_limit:
             file_stream.close()
-            raise ApiError(
-                code="FILE_TOO_LARGE",
-                message="File too large. Maximum size is 25 MB.",
-                status_code=413,
-                retryable=False,
-            )
+            raise _file_too_large(upload_limit)
         file_stream.seek(0)
         return file_name, file_stream.read()
 
     return "uploaded-file", bytes(buffer)
+
+
+def _file_too_large(upload_limit: int) -> ApiError:
+    return ApiError(
+        code="FILE_TOO_LARGE",
+        message=f"File too large. Maximum size is {upload_limit // (1024 * 1024)} MB.",
+        status_code=413,
+        retryable=False,
+    )
 
 
 def _parse_headers(header_text: str) -> dict[str, str]:

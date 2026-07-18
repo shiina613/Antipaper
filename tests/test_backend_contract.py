@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from pathlib import Path
 import time
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.errors import ApiError
 from backend.main import app, service
+from backend import service as backend_service
 from backend.service import AntipaperService
 
 
@@ -20,6 +22,44 @@ def test_health_endpoint_works() -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["service"] == "antipaper-backend"
+
+
+def test_vercel_upload_processes_before_return(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("VERCEL", "1")
+    runtime = AntipaperService(artifact_root=tmp_path)
+    calls: list[str] = []
+
+    def process_inline(document_id: str) -> None:
+        calls.append("inline")
+        runtime.store._documents[document_id].status = "completed"
+
+    def process_in_background(record) -> None:  # noqa: ANN001
+        calls.append("background")
+
+    monkeypatch.setattr(runtime.store, "process_document", process_inline)
+    monkeypatch.setattr(runtime.store, "_start_processing", process_in_background)
+
+    upload = runtime.submit_document("demo.pdf", b"%PDF-1.4 demo")
+
+    assert upload.status == "completed"
+    assert calls == ["inline"]
+    runtime.shutdown()
+
+
+def test_vercel_upload_limit_is_four_mib(monkeypatch) -> None:
+    monkeypatch.setenv("VERCEL", "1")
+
+    assert backend_service.runtime_upload_limit_bytes() == 4 * 1024 * 1024
+
+
+def test_vercel_default_artifacts_use_tmp(monkeypatch) -> None:
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.delenv("ARTIFACT_DIR", raising=False)
+
+    runtime = AntipaperService()
+
+    assert runtime.store._artifact_root == Path("/tmp/antipaper/documents").resolve()
+    runtime.shutdown()
 
 
 def test_invalid_file_returns_standard_error_envelope() -> None:

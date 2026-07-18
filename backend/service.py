@@ -33,7 +33,8 @@ except ModuleNotFoundError:  # pragma: no cover - package import fallback
     from src.retrieval import RetrievalIndex, build_index, build_index_async
 
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+LOCAL_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+VERCEL_MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 PROCESSING_WAIT_TIMEOUT_SECONDS = 15.0
 STAGE_QUEUED = "queued"
@@ -48,6 +49,14 @@ FAILED_ERROR_STATUSES = {
     "MODEL_TIMEOUT": 504,
     "PROCESSING_FAILED": 409,
 }
+
+
+def is_vercel_runtime() -> bool:
+    return os.getenv("VERCEL") == "1"
+
+
+def runtime_upload_limit_bytes() -> int:
+    return VERCEL_MAX_UPLOAD_BYTES if is_vercel_runtime() else LOCAL_MAX_UPLOAD_BYTES
 
 
 def _configured_llm_client() -> object | None:
@@ -118,15 +127,21 @@ class DocumentStore:
             self._embedding_client_factory = embedding_client.new_loop_local_embedding_client
         else:
             self._embedding_client_factory = None
-        root = artifact_root or Path(os.getenv("ARTIFACT_DIR", ".artifacts"))
+        if artifact_root is not None:
+            root = artifact_root
+        elif is_vercel_runtime():
+            root = Path("/tmp/antipaper")
+        else:
+            root = Path(os.getenv("ARTIFACT_DIR", ".artifacts"))
         self._artifact_root = (root.expanduser() / "documents").resolve()
         self._artifact_root.mkdir(parents=True, exist_ok=True)
 
     def submit_upload(self, file_name: str, file_bytes: bytes) -> tuple[DocumentRecord, bool]:
-        if len(file_bytes) > MAX_UPLOAD_BYTES:
+        upload_limit = runtime_upload_limit_bytes()
+        if len(file_bytes) > upload_limit:
             raise ApiError(
                 code="FILE_TOO_LARGE",
-                message="File too large. Maximum size is 25 MB.",
+                message=f"File too large. Maximum size is {upload_limit // (1024 * 1024)} MB.",
                 status_code=413,
                 retryable=False,
             )
@@ -164,8 +179,12 @@ class DocumentStore:
                 file_bytes=file_bytes,
             )
             self._documents[document_id] = record
+
+        if is_vercel_runtime():
+            self.process_document(record.document_id)
+        else:
             self._start_processing(record)
-            return record, False
+        return record, False
 
     def ensure_processed(self, document_id: str) -> DocumentRecord:
         record = self.get(document_id)
