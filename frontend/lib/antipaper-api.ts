@@ -2,7 +2,7 @@ const API_BASE = "/api/v1";
 const MOCK_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_ENABLE_MOCK_FALLBACK === "true";
 let lockedApiMode: ApiMode | null = null;
 const USER_ID_STORAGE_KEY = "antipaper.user-id";
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_FILE_SIZE = 4 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -302,7 +302,7 @@ export function validateDocumentFile(file: File): string | null {
   }
 
   if (file.size > MAX_FILE_SIZE) {
-    return "Tệp vượt quá giới hạn 25 MB.";
+    return "Tệp vượt quá giới hạn 4 MB.";
   }
 
   return null;
@@ -338,7 +338,11 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
     let message = "Không thể kết nối backend.";
     try {
       const payload = (await response.json()) as ApiErrorPayload | { error?: unknown };
-      message = normalizeApiError(payload.error)?.message ?? message;
+      const error = normalizeApiError(payload.error);
+      message =
+        error?.code === "DOCUMENT_NOT_FOUND"
+          ? "Phiên xử lý đã hết hạn trên máy chủ demo. Vui lòng tải lại tài liệu."
+          : error?.message ?? message;
     } catch {
       message = response.statusText || message;
     }

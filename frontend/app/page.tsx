@@ -67,7 +67,6 @@ type ChatMessage =
     };
 
 const emptyHistory: TaskHistoryPage = { items: [], total: 0, limit: 20, offset: 0 };
-const ACTIVE_DOCUMENT_STORAGE_KEY = "antipaper.active-document-id";
 
 export default function Home() {
   const [view, setView] = useState<AppView>("upload");
@@ -130,7 +129,6 @@ export default function Home() {
     setIsChatOpen(false);
     setIsMobileNavOpen(false);
     closeCitation();
-    persistActiveDocument(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -175,7 +173,6 @@ export default function Home() {
       if (sessionToken !== sessionTokenRef.current) return;
       setDocumentId(upload.document_id);
       setIsCached(upload.cached);
-      persistActiveDocument(upload.document_id);
       setDocumentStatus(upload.status);
       const initialStage: ProcessingStage =
         upload.status === "completed"
@@ -201,7 +198,14 @@ export default function Home() {
       });
       setView("document");
       setDocumentTab("overview");
-      setIsPolling(true);
+      if (upload.status === "completed") {
+        const nextReport = await getDocumentReport(upload.document_id);
+        if (sessionToken !== sessionTokenRef.current) return;
+        setReport(nextReport);
+        setIsPolling(false);
+      } else {
+        setIsPolling(upload.status !== "failed");
+      }
     } catch (error) {
       setUploadError(errorMessage(error, "Không thể tải tài liệu. Vui lòng kiểm tra kết nối backend."));
     } finally {
@@ -310,7 +314,6 @@ export default function Home() {
       if (sessionToken !== sessionTokenRef.current) return;
       setDocumentId(item.document_id);
       setIsCached(item.cached);
-      persistActiveDocument(item.document_id);
       setDocumentStatus("completed");
       setStatus({
         document_id: item.document_id,
@@ -330,26 +333,6 @@ export default function Home() {
       setHistoryError(errorMessage(error, "Không thể mở lại báo cáo này."));
     }
   }
-
-  useEffect(() => {
-    const restoredDocumentId = readActiveDocument();
-    if (!restoredDocumentId) return;
-    const restoreTimer = window.setTimeout(() => {
-      setDocumentId(restoredDocumentId);
-      setDocumentStatus("queued");
-      setStatus({
-        document_id: restoredDocumentId,
-        status: "queued",
-        stage: "queued",
-        progress: 0,
-        elapsed_seconds: 0,
-        error: null,
-      });
-      setView("document");
-      setIsPolling(true);
-    }, 0);
-    return () => window.clearTimeout(restoreTimer);
-  }, []);
 
   useEffect(() => {
     if (!documentId || !isPolling) return;
@@ -1619,21 +1602,4 @@ function formatLatency(value: number) {
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function persistActiveDocument(documentId: string | null) {
-  try {
-    if (documentId) window.localStorage.setItem(ACTIVE_DOCUMENT_STORAGE_KEY, documentId);
-    else window.localStorage.removeItem(ACTIVE_DOCUMENT_STORAGE_KEY);
-  } catch {
-    // Storage is optional; the active in-memory session remains functional.
-  }
-}
-
-function readActiveDocument(): string | null {
-  try {
-    return window.localStorage.getItem(ACTIVE_DOCUMENT_STORAGE_KEY);
-  } catch {
-    return null;
-  }
 }

@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 
+import fitz
 from fastapi.testclient import TestClient
 
 from backend.errors import ApiError
@@ -147,6 +148,27 @@ def test_artifact_cache_survives_new_service_instance(tmp_path) -> None:
 
     report = rehydrated_service.get_report(document_id)
     assert report.document_id == document_id
+
+
+def test_pdf_keeps_blank_final_page(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    document = fitz.open()
+    first_page = document.new_page()
+    first_page.insert_text((72, 72), "Antipaper demo")
+    document.new_page()
+    file_bytes = document.tobytes()
+    document.close()
+    runtime = AntipaperService(artifact_root=tmp_path)
+
+    upload = runtime.submit_document("two-pages.pdf", file_bytes)
+    report = runtime.get_report(upload.document_id)
+    blank_page = runtime.get_page(upload.document_id, 2)
+
+    assert report.page_count == 2
+    assert blank_page.page_number == 2
+    assert blank_page.text == ""
+    runtime.shutdown()
 
 
 def test_too_large_file_returns_standard_error_envelope() -> None:

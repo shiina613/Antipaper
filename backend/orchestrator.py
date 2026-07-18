@@ -178,8 +178,11 @@ class DocumentOrchestrator:
             for chunk in normalized.chunks:
                 pages_by_number.setdefault(chunk.page, []).append(chunk.text)
             stitched_pages = [
-                StitchedPage(page_number=page, content="\n\n".join(parts).strip())
-                for page, parts in sorted(pages_by_number.items())
+                StitchedPage(
+                    page_number=page,
+                    content="\n\n".join(pages_by_number.get(page, [])).strip(),
+                )
+                for page in range(1, normalized.page_count + 1)
             ]
             if not stitched_pages:
                 stitched_pages = [StitchedPage(page_number=1, content="")]
