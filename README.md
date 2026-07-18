@@ -1,6 +1,7 @@
 # Antipaper
 
 Trợ lý AI giúp cán bộ đọc nhanh tài liệu họp dài, chuẩn bị câu hỏi và tra cứu bằng tiếng Việt với citation đến trang/mục/điều.
+<img width="1939" height="4097" alt="mermaid-diagram-2026-07-18-075329" src="https://github.com/user-attachments/assets/e50b2b98-9fe2-4cdd-8f85-1cd4eb7334f0" />
 
 ## Trạng thái hiện tại
 
