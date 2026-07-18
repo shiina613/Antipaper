@@ -19,4 +19,5 @@ frontend/.vercel/
 
 .artifacts/
 uploads/
+.worktrees/
 .ini
