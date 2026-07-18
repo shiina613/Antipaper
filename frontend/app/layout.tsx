@@ -1,24 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Inter } from "next/font/google";
+import { Be_Vietnam_Pro, Space_Mono } from "next/font/google";
 
-import { cn } from "@/lib/utils";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+const beVietnamPro = Be_Vietnam_Pro({
+  variable: "--font-be-vietnam-pro",
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "500", "600", "700"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const spaceMono = Space_Mono({
+  variable: "--font-space-mono",
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "700"],
 });
 
 export const metadata: Metadata = {
   title: "Antipaper",
-  description: "Executive intelligence dashboard for Vietnamese meeting documents.",
+  description: "Trợ lý AI chuẩn bị họp với báo cáo có cấu trúc và nguồn kiểm chứng.",
 };
 
 export default function RootLayout({
@@ -27,8 +26,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" className={cn("font-sans", inter.variable)}>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
+    <html lang="vi" className={beVietnamPro.variable}>
+      <body
+        suppressHydrationWarning
+        className={`${spaceMono.variable} antialiased`}
+      >
+        {children}
+      </body>
     </html>
   );
 }
