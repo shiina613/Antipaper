@@ -14,11 +14,7 @@ from typing import Any
 
 from evals.adapters import BenchmarkApplication
 from evals.dataset import load_release_records
-
-try:
-    from retrieval import evaluate_golden_set, load_golden_cases
-except ModuleNotFoundError:
-    from src.retrieval import evaluate_golden_set, load_golden_cases
+from backend.retrieval import evaluate_golden_set, load_golden_cases
 
 
 ROOT = Path(__file__).resolve().parents[1]

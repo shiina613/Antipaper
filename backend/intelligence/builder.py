@@ -22,7 +22,7 @@ from .contracts import (
     TermExplanation,
     coerce_normalized_document,
 )
-from .prompts import MAP_PROMPT, REDUCE_PROMPT, SYSTEM_PROMPT
+from .prompts import MAP_PROMPT, QUESTION_PROMPT, REDUCE_PROMPT, SYSTEM_PROMPT, TERM_PROMPT
 
 
 CallLLM: TypeAlias = Callable[[list[dict[str, str]], type[IntelligenceDraft]], Awaitable[Any]]
@@ -44,6 +44,20 @@ class IntelligenceBuilder:
     builder does not initialize another model client and therefore remains
     deterministic under a test double.
     """
+
+    SUMMARY_MIN_SECTION_CHARS = 250
+    SUMMARY_MAX_WORDS = 800
+    SUMMARY_MAX_ITEM_WORDS = 90
+    SUMMARY_MAX_CITATIONS_PER_ITEM = 6
+    SUMMARY_SECTION_WORD_BUDGETS = {
+        "context": 160,
+        "main_content": 320,
+        "decision_points": 160,
+        "impact": 160,
+    }
+    TERM_MINIMUM = 10
+    TERM_LIMIT = 100
+    TERM_EVIDENCE_LIMIT = 80
 
     def __init__(
         self,
@@ -118,6 +132,77 @@ class IntelligenceBuilder:
             )
         )
 
+        term_start = perf_counter()
+        term_candidates = [
+            term
+            for draft in [*valid_maps, reduced]
+            for term in draft.terms
+        ]
+        term_prompt = TERM_PROMPT.format(
+            summary_json=json.dumps(
+                reduced.summary.model_dump(mode="json"),
+                ensure_ascii=False,
+            ),
+            candidates_json=json.dumps(
+                [term.model_dump(mode="json") for term in term_candidates],
+                ensure_ascii=False,
+            ),
+            chunks_json=json.dumps(
+                self._term_evidence(reduced, term_candidates, normalized),
+                ensure_ascii=False,
+            ),
+        )
+        term_draft = await self._invoke_llm(term_prompt)
+        term_calls = 1
+        generated_terms = list(term_draft.terms)
+        if self._valid_term_count(generated_terms, normalized) < self.TERM_MINIMUM:
+            retry_draft = await self._invoke_llm(
+                term_prompt
+                + "\nLần trả lời trước không đạt tối thiểu 10 mục hợp lệ. Hãy chọn lại "
+                "10-30 thuật ngữ/điều khoản khác nhau, mỗi mục có đúng một citation_id."
+            )
+            generated_terms = [*retry_draft.terms, *generated_terms]
+            term_calls += 1
+        reduced = reduced.model_copy(
+            update={
+                "terms": self._merge_terms(
+                    generated_terms,
+                    reduced.terms,
+                    *(draft.terms for draft in valid_maps),
+                )
+            }
+        )
+        timings.append(
+            StageTiming(
+                stage="term_generation",
+                duration_ms=(perf_counter() - term_start) * 1000,
+                llm_calls=term_calls,
+            )
+        )
+
+        question_start = perf_counter()
+        question_prompt = QUESTION_PROMPT.format(
+            summary_json=json.dumps(
+                reduced.summary.model_dump(mode="json"),
+                ensure_ascii=False,
+            ),
+            chunks_json=json.dumps(
+                self._question_evidence(reduced, normalized),
+                ensure_ascii=False,
+            ),
+        )
+        question_draft = await self._invoke_llm(question_prompt)
+        reduced = reduced.model_copy(
+            update={"suggested_questions": question_draft.suggested_questions}
+        )
+        timings.append(
+            StageTiming(
+                stage="question_generation",
+                duration_ms=(perf_counter() - question_start) * 1000,
+                llm_calls=1,
+            )
+        )
+
         validation_start = perf_counter()
         sanitized, citations_valid = await self._sanitize(reduced, normalized)
         questions = [
@@ -127,6 +212,10 @@ class IntelligenceBuilder:
             for question in sanitized.suggested_questions
         ]
         sanitized = sanitized.model_copy(update={"suggested_questions": questions})
+        if len(sanitized.terms) < self.TERM_MINIMUM:
+            raise IntelligenceGenerationError(
+                "Term generation returned fewer than 10 grounded, unique terms"
+            )
         quality = self._quality(sanitized, citations_valid)
         timings.append(
             StageTiming(
@@ -140,6 +229,121 @@ class IntelligenceBuilder:
             stage_timings=timings,
             quality=quality,
         )
+
+    @staticmethod
+    def _question_evidence(
+        draft: IntelligenceDraft,
+        document: NormalizedDocument,
+    ) -> list[dict[str, Any]]:
+        """Return only evidence represented in the final summary.
+
+        This keeps the question-generation context small and prevents the model
+        from drifting back to unrelated map-batch details after reduction.
+        """
+
+        summary_ids = {
+            citation_id
+            for section in (
+                draft.summary.context,
+                draft.summary.main_content,
+                draft.summary.decision_points,
+                draft.summary.impact,
+            )
+            for item in section
+            for citation_id in item.citation_ids
+        }
+        return [
+            chunk.model_dump(mode="json")
+            for chunk in document.chunks
+            if chunk.chunk_id in summary_ids
+        ]
+
+    def _term_evidence(
+        self,
+        draft: IntelligenceDraft,
+        candidates: Iterable[TermExplanation],
+        document: NormalizedDocument,
+    ) -> list[dict[str, Any]]:
+        priority_ids = {
+            citation_id
+            for section in (
+                draft.summary.context,
+                draft.summary.main_content,
+                draft.summary.decision_points,
+                draft.summary.impact,
+            )
+            for item in section
+            for citation_id in item.citation_ids
+        }
+        priority_ids.update(
+            citation_id
+            for term in candidates
+            for citation_id in term.citation_ids
+        )
+
+        selected: list[Any] = []
+        selected_ids: set[str] = set()
+        represented_pages: set[int] = set()
+
+        def add(chunk: Any) -> None:
+            if (
+                chunk.chunk_id in selected_ids
+                or len(selected) >= self.TERM_EVIDENCE_LIMIT
+            ):
+                return
+            selected.append(chunk)
+            selected_ids.add(chunk.chunk_id)
+            represented_pages.add(chunk.page)
+
+        for chunk in document.chunks:
+            if chunk.chunk_id in priority_ids:
+                add(chunk)
+        for chunk in document.chunks:
+            if chunk.page not in represented_pages:
+                add(chunk)
+        for chunk in document.chunks:
+            add(chunk)
+
+        return [
+            {
+                **chunk.model_dump(mode="json"),
+                "text": chunk.text[:1200],
+            }
+            for chunk in selected
+        ]
+
+    def _merge_terms(
+        self,
+        *groups: Iterable[TermExplanation],
+    ) -> list[TermExplanation]:
+        merged: list[TermExplanation] = []
+        seen: set[str] = set()
+        for group in groups:
+            for term in group:
+                key = self._normalize_text(term.term)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(term)
+                if len(merged) >= self.TERM_LIMIT:
+                    return merged
+        return merged
+
+    @classmethod
+    def _valid_term_count(
+        cls,
+        terms: Iterable[TermExplanation],
+        document: NormalizedDocument,
+    ) -> int:
+        whitelist = document.citation_whitelist
+        seen: set[str] = set()
+        for term in terms:
+            key = cls._normalize_text(term.term)
+            if key and key not in seen and any(
+                citation_id in whitelist for citation_id in term.citation_ids
+            ):
+                seen.add(key)
+        return len(seen)
 
     async def _invoke_llm(self, user_prompt: str) -> IntelligenceDraft:
         response = await self.call_llm(
@@ -200,11 +404,26 @@ class IntelligenceBuilder:
                 result.append(item.model_copy(update={"citation_ids": ids}))
             return result
 
-        summary = IntelligenceSummary(
-            context=evidence(draft.summary.context),
-            main_content=evidence(draft.summary.main_content),
-            decision_points=evidence(draft.summary.decision_points),
-            impact=evidence(draft.summary.impact),
+        def summary_section(items: Iterable[EvidenceItem]) -> list[EvidenceItem]:
+            grounded = evidence(items)
+            return [
+                EvidenceItem(
+                    text=self._clip_words(item.text, self.SUMMARY_MAX_ITEM_WORDS),
+                    citation_ids=item.citation_ids[
+                        : self.SUMMARY_MAX_CITATIONS_PER_ITEM
+                    ],
+                )
+                for item in grounded
+                if item.text.strip()
+            ]
+
+        summary = self._limit_summary_words(
+            IntelligenceSummary(
+                context=summary_section(draft.summary.context),
+                main_content=summary_section(draft.summary.main_content),
+                decision_points=summary_section(draft.summary.decision_points),
+                impact=summary_section(draft.summary.impact),
+            )
         )
 
         terms: list[TermExplanation] = []
@@ -215,7 +434,9 @@ class IntelligenceBuilder:
             if not ids or key in seen_terms:
                 continue
             seen_terms.add(key)
-            terms.append(term.model_copy(update={"citation_ids": ids}))
+            terms.append(term.model_copy(update={"citation_ids": ids[:1]}))
+            if len(terms) >= self.TERM_LIMIT:
+                break
 
         questions: list[SuggestedQuestion] = []
         for question in draft.suggested_questions:
@@ -301,14 +522,23 @@ class IntelligenceBuilder:
 
     @staticmethod
     def _quality(draft: IntelligenceDraft, citations_valid: bool) -> QualityResult:
-        required_summary_complete = all(
-            (
-                draft.summary.context,
-                draft.summary.main_content,
-                draft.summary.decision_points,
-                draft.summary.impact,
-            )
+        summary_sections = (
+            draft.summary.context,
+            draft.summary.main_content,
+            draft.summary.decision_points,
+            draft.summary.impact,
         )
+        summary_word_count = sum(
+            IntelligenceBuilder._word_count(item.text)
+            for section in summary_sections
+            for item in section
+        )
+        required_summary_complete = all(
+            bool(section)
+            and sum(len(item.text) for item in section)
+            >= IntelligenceBuilder.SUMMARY_MIN_SECTION_CHARS
+            for section in summary_sections
+        ) and summary_word_count <= IntelligenceBuilder.SUMMARY_MAX_WORDS
         passing = sum(
             (question.rubric_score or 0) >= 3
             for question in draft.suggested_questions
@@ -349,6 +579,80 @@ class IntelligenceBuilder:
     @staticmethod
     def _normalize_text(text: str) -> str:
         return " ".join(re.findall(r"[\wÀ-ỹ]+", text.casefold()))
+
+    @staticmethod
+    def _clip_words(text: str, limit: int) -> str:
+        compact = re.sub(r"\s+", " ", text).strip()
+        words = compact.split()
+        if len(words) <= limit:
+            return compact
+        candidate = " ".join(words[:limit])
+        sentence_ends = [match.end() for match in re.finditer(r"[.!?](?=\s|$)", candidate)]
+        if sentence_ends:
+            sentence_candidate = candidate[: sentence_ends[-1]].strip()
+            if IntelligenceBuilder._word_count(sentence_candidate) >= limit // 2:
+                return sentence_candidate
+        return candidate.rstrip(" ,;:") + "…"
+
+    @staticmethod
+    def _word_count(text: str) -> int:
+        return len(re.findall(r"\S+", text.strip()))
+
+    @classmethod
+    def _limit_summary_words(cls, summary: IntelligenceSummary) -> IntelligenceSummary:
+        """Keep every section represented while enforcing the 800-word API limit."""
+
+        def fit(items: list[EvidenceItem], budget: int) -> list[EvidenceItem]:
+            fitted: list[EvidenceItem] = []
+            remaining = budget
+            for item in items:
+                if remaining <= 0:
+                    break
+                item_words = cls._word_count(item.text)
+                if item_words <= remaining:
+                    fitted.append(item)
+                    remaining -= item_words
+                    continue
+                if remaining >= 12:
+                    fitted.append(
+                        item.model_copy(update={"text": cls._clip_words(item.text, remaining)})
+                    )
+                break
+            return fitted
+
+        if (
+            sum(
+                cls._word_count(item.text)
+                for section in (
+                    summary.context,
+                    summary.main_content,
+                    summary.decision_points,
+                    summary.impact,
+                )
+                for item in section
+            )
+            <= cls.SUMMARY_MAX_WORDS
+        ):
+            return summary
+
+        return IntelligenceSummary(
+            context=fit(
+                summary.context,
+                cls.SUMMARY_SECTION_WORD_BUDGETS["context"],
+            ),
+            main_content=fit(
+                summary.main_content,
+                cls.SUMMARY_SECTION_WORD_BUDGETS["main_content"],
+            ),
+            decision_points=fit(
+                summary.decision_points,
+                cls.SUMMARY_SECTION_WORD_BUDGETS["decision_points"],
+            ),
+            impact=fit(
+                summary.impact,
+                cls.SUMMARY_SECTION_WORD_BUDGETS["impact"],
+            ),
+        )
 
     @classmethod
     def _meaningful_tokens(cls, text: str) -> set[str]:

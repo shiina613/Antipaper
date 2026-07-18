@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   AlertTriangle,
   BookOpenText,
@@ -7,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  Eye,
   FileQuestion,
   FileText,
   FileUp,
@@ -30,8 +30,8 @@ import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState 
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
-  type ApiMode,
   type CitationMeta,
   type DocumentStatus,
   type PageResponse,
@@ -47,8 +47,6 @@ import {
   getDocumentReport,
   getDocumentStatus,
   getTaskHistory,
-  mockDocumentId,
-  mockReport,
   stageLabel,
   uploadDocument,
   validateDocumentFile,
@@ -71,80 +69,11 @@ type ChatMessage =
 const emptyHistory: TaskHistoryPage = { items: [], total: 0, limit: 20, offset: 0 };
 const ACTIVE_DOCUMENT_STORAGE_KEY = "antipaper.active-document-id";
 
-const previewHistoryItems: TaskHistoryItem[] = [
-  {
-    task_id: "preview-upload-current",
-    task_type: "document_processing",
-    document_id: mockDocumentId,
-    display_name: mockReport.file_name,
-    status: "completed",
-    stage: "ready",
-    progress: 100,
-    cached: false,
-    created_at: "2026-07-18T07:30:00Z",
-    started_at: "2026-07-18T07:30:01Z",
-    updated_at: "2026-07-18T07:30:38Z",
-    completed_at: "2026-07-18T07:30:38Z",
-    duration_seconds: 38.2,
-    error: null,
-  },
-  {
-    task_id: "preview-question-current",
-    task_type: "question_answer",
-    document_id: mockDocumentId,
-    display_name: "Mức tăng trưởng doanh thu đến từ đâu?",
-    status: "completed",
-    stage: "ready",
-    progress: 100,
-    cached: false,
-    created_at: "2026-07-18T07:34:00Z",
-    started_at: "2026-07-18T07:34:00Z",
-    updated_at: "2026-07-18T07:34:01Z",
-    completed_at: "2026-07-18T07:34:01Z",
-    duration_seconds: 0.42,
-    error: null,
-  },
-  {
-    task_id: "preview-upload-cached",
-    task_type: "document_processing",
-    document_id: "preview-policy-document",
-    display_name: "Kế hoạch chuyển đổi số cấp tỉnh 2026.pdf",
-    status: "completed",
-    stage: "ready",
-    progress: 100,
-    cached: true,
-    created_at: "2026-07-17T03:10:00Z",
-    started_at: "2026-07-17T03:10:00Z",
-    updated_at: "2026-07-17T03:10:00Z",
-    completed_at: "2026-07-17T03:10:00Z",
-    duration_seconds: 0,
-    error: null,
-  },
-  {
-    task_id: "preview-upload-failed",
-    task_type: "document_processing",
-    document_id: null,
-    display_name: "Phụ lục ngân sách bị khóa.pdf",
-    status: "failed",
-    stage: "failed",
-    progress: 100,
-    cached: false,
-    created_at: "2026-07-16T09:20:00Z",
-    started_at: "2026-07-16T09:20:00Z",
-    updated_at: "2026-07-16T09:20:02Z",
-    completed_at: "2026-07-16T09:20:02Z",
-    duration_seconds: 2.1,
-    error: { code: "ENCRYPTED_DOCUMENT", message: "Tài liệu có mật khẩu và không thể trích xuất." },
-  },
-];
-
 export default function Home() {
   const [view, setView] = useState<AppView>("upload");
   const [documentTab, setDocumentTab] = useState<DocumentTab>("overview");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [isPreviewMode, setIsPreviewMode] = useState(false);
-  const [apiMode, setApiMode] = useState<ApiMode>("api");
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [documentStatus, setDocumentStatus] = useState<DocumentStatus | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -157,8 +86,9 @@ export default function Home() {
   const [isCached, setIsCached] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [selectedCitationId, setSelectedCitationId] = useState<string | null>(null);
-  const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
+  const [selectedCitationIds, setSelectedCitationIds] = useState<string[]>([]);
+  const [selectedPages, setSelectedPages] = useState<Record<number, PageResponse>>({});
+  const [selectedSourceKind, setSelectedSourceKind] = useState<"summary" | "citation">("citation");
   const [isCitationLoading, setIsCitationLoading] = useState(false);
   const [citationError, setCitationError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -175,8 +105,6 @@ export default function Home() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
 
-  const selectedCitation =
-    report && selectedCitationId ? report.citations[selectedCitationId] ?? null : null;
   const canAsk = documentStatus === "completed" && Boolean(report);
 
   function resetUpload() {
@@ -194,50 +122,16 @@ export default function Home() {
     setIsCached(false);
     setMessages([]);
     setIsChatOpen(false);
-    setIsPreviewMode(false);
     setIsMobileNavOpen(false);
     closeCitation();
     persistActiveDocument(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function enterPreviewMode() {
-    setIsPreviewMode(true);
-    setApiMode("mock");
-    setDocumentId(mockDocumentId);
-    setDocumentStatus("completed");
-    setStatus({
-      document_id: mockDocumentId,
-      status: "completed",
-      stage: "completed",
-      progress: 100,
-      elapsed_seconds: mockReport.processing_seconds,
-      error: null,
-    });
-    setReport(mockReport);
-    setSelectedFile(null);
-    setIsCached(false);
-    setDocumentError(null);
-    setMessages([
-      { role: "user", text: "Mức tăng trưởng doanh thu đến từ đâu?" },
-      {
-        role: "assistant",
-        text: "Tài liệu cho thấy tăng trưởng chủ yếu đến từ việc mở rộng khách hàng doanh nghiệp lớn và triển khai hai trung tâm dữ liệu mới.",
-        insufficientEvidence: false,
-        citationIds: ["P14-D2"],
-        latencyMs: 420,
-      },
-    ]);
-    setView("document");
-    setDocumentTab("overview");
-    setIsChatOpen(false);
-    setIsMobileNavOpen(false);
-    closeCitation();
-  }
-
   function closeCitation() {
-    setSelectedCitationId(null);
-    setSelectedPage(null);
+    setSelectedCitationIds([]);
+    setSelectedPages({});
+    setSelectedSourceKind("citation");
     setCitationError(null);
   }
 
@@ -263,10 +157,8 @@ export default function Home() {
     setIsUploading(true);
     setUploadError(null);
     setDocumentError(null);
-    setIsPreviewMode(false);
     try {
       const upload = await uploadDocument(selectedFile);
-      setApiMode(upload.apiMode);
       setDocumentId(upload.document_id);
       setIsCached(upload.cached);
       persistActiveDocument(upload.document_id);
@@ -303,35 +195,44 @@ export default function Home() {
     }
   }
 
-  async function handleSelectCitation(citationId: string) {
+  async function handleSelectCitations(
+    citationIds: string[],
+    sourceKind: "summary" | "citation" = "summary",
+  ) {
     if (!report) return;
-    const citation = report.citations[citationId];
-    if (!citation) return;
+    const validIds = Array.from(new Set(citationIds)).filter((id) => Boolean(report.citations[id]));
+    if (!validIds.length) return;
+    const pageNumbers = Array.from(
+      new Set(validIds.map((id) => report.citations[id].page)),
+    ).sort((left, right) => left - right);
 
-    setSelectedCitationId(citationId);
+    setSelectedCitationIds(validIds);
+    setSelectedSourceKind(sourceKind);
     setIsChatOpen(false);
-    setSelectedPage(null);
+    setSelectedPages({});
     setCitationError(null);
     setIsCitationLoading(true);
-    if (isPreviewMode) {
-      setSelectedPage({
-        document_id: report.document_id,
-        page_number: citation.page,
-        text: citation.excerpt,
-        blocks: [],
-      });
-      setIsCitationLoading(false);
-      return;
+    const results = await Promise.allSettled(
+      pageNumbers.map((pageNumber) => getDocumentPage(report.document_id, pageNumber)),
+    );
+    const loadedPages: Record<number, PageResponse> = {};
+    let failedPages = 0;
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        loadedPages[pageNumbers[index]] = result.value;
+      } else {
+        failedPages += 1;
+      }
+    });
+    setSelectedPages(loadedPages);
+    if (failedPages) {
+      setCitationError(`Không tải được ${failedPages}/${pageNumbers.length} trang nguồn.`);
     }
-    try {
-      const page = await getDocumentPage(report.document_id, citation.page);
-      setApiMode(page.apiMode);
-      setSelectedPage(page);
-    } catch (error) {
-      setCitationError(errorMessage(error, "Không tải được nội dung trang nguồn."));
-    } finally {
-      setIsCitationLoading(false);
-    }
+    setIsCitationLoading(false);
+  }
+
+  async function handleSelectCitation(citationId: string) {
+    await handleSelectCitations([citationId], "citation");
   }
 
   async function handleAskQuestion(event: FormEvent<HTMLFormElement>) {
@@ -343,23 +244,8 @@ export default function Home() {
     setQaError(null);
     setIsAsking(true);
     setMessages((current) => [...current, { role: "user", text: trimmed }]);
-    if (isPreviewMode) {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          text: "Đây là câu trả lời minh họa cho bố cục Q&A. Khi dùng API thật, nội dung sẽ được tạo từ bằng chứng trong tài liệu.",
-          insufficientEvidence: false,
-          citationIds: ["P12-D7"],
-          latencyMs: 380,
-        },
-      ]);
-      setIsAsking(false);
-      return;
-    }
     try {
       const response = await askDocumentQuestion(report.document_id, trimmed);
-      setApiMode(response.apiMode);
       setMessages((current) => [
         ...current,
         {
@@ -386,19 +272,8 @@ export default function Home() {
     if (!item.document_id || item.status !== "completed") return;
     setHistoryError(null);
     setDocumentError(null);
-    if (isPreviewMode && item.document_id === mockDocumentId) {
-      setReport(mockReport);
-      setDocumentId(mockDocumentId);
-      setIsCached(false);
-      setDocumentStatus("completed");
-      setView("document");
-      setDocumentTab("overview");
-      setIsChatOpen(false);
-      return;
-    }
     try {
       const nextReport = await getDocumentReport(item.document_id);
-      setApiMode(nextReport.apiMode);
       setDocumentId(item.document_id);
       setIsCached(item.cached);
       persistActiveDocument(item.document_id);
@@ -451,14 +326,12 @@ export default function Home() {
       try {
         const nextStatus = await getDocumentStatus(currentDocumentId);
         if (cancelled) return;
-        setApiMode(nextStatus.apiMode);
         setStatus(nextStatus);
         setDocumentStatus(nextStatus.status);
 
         if (nextStatus.status === "completed") {
           const nextReport = await getDocumentReport(currentDocumentId);
           if (cancelled) return;
-          setApiMode(nextReport.apiMode);
           setReport(nextReport);
           setDocumentTab("overview");
           setIsPolling(false);
@@ -487,19 +360,6 @@ export default function Home() {
     async function loadHistory() {
       setIsHistoryLoading(true);
       setHistoryError(null);
-      if (isPreviewMode) {
-        const filteredItems = previewHistoryItems.filter(
-          (item) => (!historyStatus || item.status === historyStatus) && (!historyType || item.task_type === historyType),
-        );
-        setHistoryPage({
-          items: filteredItems.slice(historyOffset, historyOffset + 20),
-          total: filteredItems.length,
-          limit: 20,
-          offset: historyOffset,
-        });
-        setIsHistoryLoading(false);
-        return;
-      }
       try {
         const page = await getTaskHistory({
           limit: 20,
@@ -508,7 +368,6 @@ export default function Home() {
           taskType: historyType,
         });
         if (cancelled) return;
-        setApiMode(page.apiMode);
         setHistoryPage(page);
       } catch (error) {
         if (cancelled) return;
@@ -522,7 +381,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [historyOffset, historyReloadKey, historyStatus, historyType, isPreviewMode, view]);
+  }, [historyOffset, historyReloadKey, historyStatus, historyType, view]);
 
   return (
     <main className="flex min-h-screen bg-[#fafaf4] text-[#1a1c19]">
@@ -563,12 +422,6 @@ export default function Home() {
         )}
       >
         <MobileWorkspaceHeader view={view} onOpenMenu={() => setIsMobileNavOpen(true)} />
-        {apiMode === "mock" && (
-          <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-xs text-amber-900">
-            Đang dùng dữ liệu xem trước hoặc fallback có kiểm soát.
-          </div>
-        )}
-
         {view === "upload" && (
           <PageContainer>
             <UploadWorkspace
@@ -578,7 +431,6 @@ export default function Home() {
               isUploading={isUploading}
               onFileChange={handleFileChange}
               onSubmit={handleUpload}
-              onPreview={enterPreviewMode}
             />
           </PageContainer>
         )}
@@ -593,7 +445,7 @@ export default function Home() {
                 </PageContainer>
                 <PageContainer className="py-7">
                   {documentTab === "overview" && (
-                    <OverviewTab report={report} onSelectCitation={handleSelectCitation} />
+                    <OverviewTab report={report} onSelectSources={handleSelectCitations} />
                   )}
                   {documentTab === "terms" && (
                     <TermsTab report={report} onSelectCitation={handleSelectCitation} />
@@ -666,12 +518,12 @@ export default function Home() {
         />
       )}
 
-      {report && selectedCitationId && (
+      {report && selectedCitationIds.length > 0 && (
         <CitationDrawer
           report={report}
-          citationId={selectedCitationId}
-          citation={selectedCitation}
-          page={selectedPage}
+          citationIds={selectedCitationIds}
+          pages={selectedPages}
+          sourceKind={selectedSourceKind}
           isLoading={isCitationLoading}
           error={citationError}
           onClose={closeCitation}
@@ -932,7 +784,6 @@ function UploadWorkspace({
   isUploading,
   onFileChange,
   onSubmit,
-  onPreview,
 }: {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   selectedFile: File | null;
@@ -940,7 +791,6 @@ function UploadWorkspace({
   isUploading: boolean;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onPreview: () => void;
 }) {
   return (
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
@@ -966,9 +816,6 @@ function UploadWorkspace({
           <Button type="submit" disabled={isUploading} className="h-11 bg-[#1a1c19] px-5 text-white">
             {isUploading ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
             {isUploading ? "Đang tải tài liệu" : "Bắt đầu phân tích"}
-          </Button>
-          <Button type="button" variant="outline" className="h-11 bg-white px-5" onClick={onPreview}>
-            <Eye className="size-4" /> Xem trước toàn bộ kết quả
           </Button>
         </div>
       </form>
@@ -1132,7 +979,13 @@ function processingStepIndex(status: StatusResponse) {
   return 0;
 }
 
-function OverviewTab({ report, onSelectCitation }: ReportTabProps) {
+function OverviewTab({
+  report,
+  onSelectSources,
+}: {
+  report: ReportResponse;
+  onSelectSources: (citationIds: string[]) => void;
+}) {
   const sections = [
     ["Điểm cần quyết định", "Các nội dung cần chủ trì kết luận hoặc lựa chọn phương án.", report.summary.decision_points],
     ["Bối cảnh", "Phạm vi và lý do tài liệu được trình tại cuộc họp.", report.summary.context],
@@ -1146,9 +999,7 @@ function OverviewTab({ report, onSelectCitation }: ReportTabProps) {
           <section key={title} className={cn(index === 0 && "rounded-lg border border-[#e3e3dd] bg-[#f4f4ee] p-5")}>
             <h2 className="font-mono text-base font-bold uppercase leading-6 tracking-[0.12em] text-[#444748]">{title}</h2>
             <p className="mt-2 text-sm text-[#62655f]">{description}</p>
-            <div className="mt-5 space-y-5">
-              {items.length ? items.map((item) => <CitedParagraph key={item.text} item={item} report={report} onSelectCitation={onSelectCitation} />) : <p className="text-sm text-[#777a74]">Chưa có nội dung trong mục này.</p>}
-            </div>
+            <SummarySectionContent items={items} report={report} onSelectSources={onSelectSources} />
           </section>
         ))}
       </article>
@@ -1192,7 +1043,7 @@ function QuestionsTab({
                 <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[#747878]">Câu hỏi {index + 1}</p>
                 <h2 className="font-medium leading-7">{item.question}</h2>
                 <p className="mt-2 text-sm leading-6 text-[#62655f]"><strong>Lý do:</strong> {item.rationale}</p>
-                <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+                <QuestionCitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
                 <Button type="button" variant="outline" className="mt-4" onClick={() => onUseQuestion(item.question)}>
                   <MessageSquareText className="size-4" /> Dùng câu hỏi này
                 </Button>
@@ -1207,33 +1058,94 @@ function QuestionsTab({
 
 function RelatedTab({ report, onSelectCitation }: ReportTabProps) {
   return (
-    <div className="mx-auto max-w-[900px]">
+    <div className="mx-auto max-w-[1100px] py-7">
+
       {report.related_documents.length ? (
-        <div className="mt-7 space-y-4">
+        <Accordion className="mt-7 gap-3" multiple>
           {report.related_documents.map((item) => (
-          <article key={`${item.document_number}-${item.title}`} className="rounded-lg border border-[#d8d5cb] bg-white p-6 transition-shadow hover:shadow-sm">
-              <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
-                <div>
-                  <Badge variant="outline" className="rounded-md font-mono">{item.document_number}</Badge>
-                  <h2 className="mt-3 text-lg font-semibold">{item.title}</h2>
-                  <p className="mt-2 text-sm text-[#62655f]">Nguồn: {sourceLabel(item.source)}</p>
+            <AccordionItem key={`${item.document_number}-${item.title}`} value={`${item.document_number}-${item.title}`} className="overflow-hidden rounded-xl border border-[#d8d5cb] bg-white shadow-sm">
+              <AccordionTrigger className="rounded-none px-5 py-4 text-base font-medium hover:bg-[#f6f6f1] hover:no-underline sm:px-6">
+                <span>{item.title}{item.document_number ? ` (${item.document_number})` : ""}</span>
+              </AccordionTrigger>
+              <AccordionContent className="border-t border-[#e5e3dc] px-5 pb-6 pt-5 sm:px-6">
+                <div className="space-y-5 text-sm leading-7 text-[#555952]">
+                  <p><span className="font-medium text-[#242624]">Tên văn bản được nhắc trong tài liệu:</span> {item.mentioned_name ?? item.title}.</p>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#62655f]">
+                    <span>Nguồn:</span>
+                    <Badge variant="outline" className="rounded-md">{sourceLabel(item.source)}</Badge>
+                    {item.publisher && <span>Đối chiếu tại {item.publisher}</span>}
+                  </div>
+                  {item.url && (
+                    <p className="break-all">
+                      <span className="font-medium text-[#242624]">URL: </span>
+                      <a href={item.url} target="_blank" rel="noreferrer" className="text-blue-700 underline underline-offset-4 hover:text-blue-900">{item.url}</a>
+                    </p>
+                  )}
+                  <div>
+                    <p className="font-medium text-[#242624]">Lý do liên quan</p>
+                    <p className="mt-1">{item.reason}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-[#242624]">Citation trong tài liệu</p>
+                    <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+                  </div>
+                  {item.excerpt && (
+                    <blockquote className="rounded-lg border-l-4 border-[#9aa486] bg-[#f6f6f1] px-4 py-3 text-[#62655f]">
+                      {item.excerpt}
+                    </blockquote>
+                  )}
                 </div>
-                <div className="max-w-xl text-sm leading-7 text-[#555952]">{item.reason}</div>
-              </div>
-              <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
-            </article>
+              </AccordionContent>
+            </AccordionItem>
           ))}
-        </div>
-      ) : <EmptyState title="Chưa phát hiện văn bản liên quan" description="Backend không trả về căn cứ liên quan cho tài liệu này." />}
+        </Accordion>
+      ) : <EmptyState title="Chưa phát hiện văn bản liên quan" description="Tài liệu không nhắc đến căn cứ cụ thể hoặc không có kết quả phù hợp từ các nguồn web được phép." />}
     </div>
   );
 }
+function SummarySectionContent({
+  items,
+  report,
+  onSelectSources,
+}: {
+  items: ReadonlyArray<{ text: string; citation_ids: string[] }>;
+  report: ReportResponse;
+  onSelectSources: (citationIds: string[]) => void;
+}) {
+  if (!items.length) {
+    return <p className="mt-5 text-sm text-[#777a74]">Chưa có nội dung trong mục này.</p>;
+  }
 
-function CitedParagraph({ item, report, onSelectCitation }: { item: { text: string; citation_ids: string[] }; report: ReportResponse; onSelectCitation: (citationId: string) => void }) {
+  const summaryItems = items
+    .map((item) => ({ ...item, text: item.text.trim() }))
+    .filter((item) => Boolean(item.text));
+  const citationIds = Array.from(
+    new Set(summaryItems.flatMap((item) => item.citation_ids)),
+  ).filter((id) => Boolean(report.citations[id]));
+
   return (
-    <div className="border-l-2 border-[#dbe5c9] pl-4">
-      <p className="text-sm leading-7">{item.text}</p>
-      <CitationList ids={item.citation_ids} report={report} onSelectCitation={onSelectCitation} />
+    <div className="mt-5 border-l-2 border-[#dbe5c9] pl-4">
+      <ul className="space-y-3 pl-5 text-[15px] leading-7 text-[#353833] marker:text-[#566340]">
+        {summaryItems.map((item, index) => (
+          <li key={`${item.text}-${index}`} className="list-disc pl-1">
+            {item.text}
+          </li>
+        ))}
+      </ul>
+      {citationIds.length > 0 && (
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-4 border-[#566340] text-[#465234] hover:bg-[#f0f3e9]"
+          onClick={() => onSelectSources(citationIds)}
+        >
+          <BookOpenText className="size-4" />
+          Nguồn tóm tắt
+          <Badge variant="secondary" className="ml-1 rounded-full font-mono text-[10px]">
+            {citationIds.length}
+          </Badge>
+        </Button>
+      )}
     </div>
   );
 }
@@ -1242,6 +1154,31 @@ function CitationList({ ids, report, onSelectCitation }: { ids: string[]; report
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {ids.map((id) => <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />)}
+    </div>
+  );
+}
+
+function QuestionCitationList({ ids, report, onSelectCitation }: { ids: string[]; report: ReportResponse; onSelectCitation: (citationId: string) => void }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const validIds = Array.from(new Set(ids)).filter((id) => Boolean(report.citations[id]));
+  const hasMore = validIds.length > 3;
+  const visibleIds = isExpanded ? validIds : validIds.slice(0, 3);
+
+  if (!validIds.length) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {visibleIds.map((id) => <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />)}
+      {hasMore && (
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() => setIsExpanded((current) => !current)}
+          className="rounded px-1 py-1 text-xs font-medium text-[#465234] underline decoration-[#9aa486] underline-offset-4 transition hover:text-[#2f3822] focus-visible:outline-2 focus-visible:outline-offset-2"
+        >
+          {isExpanded ? "(Thu gọn)" : "(Xem thêm)"}
+        </button>
+      )}
     </div>
   );
 }
@@ -1258,47 +1195,107 @@ function CitationButton({ citationId, report, onSelectCitation }: { citationId: 
 
 function CitationDrawer({
   report,
-  citationId,
-  citation,
-  page,
+  citationIds,
+  pages,
+  sourceKind,
   isLoading,
   error,
   onClose,
 }: {
   report: ReportResponse;
-  citationId: string;
-  citation: CitationMeta | null;
-  page: PageResponse | null;
+  citationIds: string[];
+  pages: Record<number, PageResponse>;
+  sourceKind: "summary" | "citation";
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
 }) {
+  const citations = citationIds
+    .map((id) => ({ id, citation: report.citations[id] }))
+    .filter((item): item is { id: string; citation: CitationMeta } => Boolean(item.citation));
+  const pageNumbers = Array.from(
+    new Set(citations.map((item) => item.citation.page)),
+  ).sort((left, right) => left - right);
+  const isSummarySource = sourceKind === "summary";
+
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Nguồn trích dẫn">
-      <button type="button" aria-label="Đóng nguồn trích dẫn" className="absolute inset-0 bg-black/35" onClick={onClose} />
-      <aside className="absolute inset-y-0 right-0 flex w-full max-w-[520px] flex-col border-l border-[#c4c7c7] bg-[#fafaf7] shadow-[-4px_0_12px_rgba(0,0,0,0.04)]">
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={isSummarySource ? "Nguồn tóm tắt" : "Nguồn trích dẫn"}>
+      <button type="button" aria-label="Đóng nguồn" className="absolute inset-0 bg-black/35" onClick={onClose} />
+      <aside className="absolute inset-y-0 right-0 flex w-full max-w-[680px] flex-col border-l border-[#c4c7c7] bg-[#fafaf7] shadow-[-4px_0_12px_rgba(0,0,0,0.04)]">
         <header className="flex items-start justify-between border-b border-[#d4d5cf] p-5">
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#62655f]">Kiểm chứng căn cứ</p>
-            <h2 className="mt-1 text-xl font-semibold">Nguồn trích dẫn</h2>
+            <h2 className="mt-1 text-xl font-semibold">{isSummarySource ? "Nguồn tóm tắt" : "Nguồn trích dẫn"}</h2>
+            <p className="mt-1 text-xs text-[#62655f]">{citations.length} đoạn nguồn trên {pageNumbers.length} trang</p>
           </div>
           <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Đóng"><X className="size-5" /></Button>
         </header>
         <div className="flex-1 overflow-y-auto p-5 sm:p-6">
-          {!citation ? <InlineError message="Citation không tồn tại trong báo cáo." /> : (
+          {!citations.length ? <InlineError message="Citation không tồn tại trong báo cáo." /> : (
             <>
-              <Badge variant="outline" className="rounded-md font-mono">{citationLabel(citation)}</Badge>
-              <h3 className="mt-4 break-words text-lg font-semibold">{report.file_name}</h3>
-              <dl className="mt-5 grid grid-cols-[92px_1fr] gap-x-3 gap-y-2 text-sm">
-                {citation.chapter && <><dt className="text-[#777a74]">Chương/Mục</dt><dd>{citation.chapter}</dd></>}
-                {citation.article && <><dt className="text-[#777a74]">Điều</dt><dd>{citation.article}</dd></>}
-                {citation.clause && <><dt className="text-[#777a74]">Khoản</dt><dd>{citation.clause}</dd></>}
-              </dl>
-              <section className="mt-6 rounded-xl border border-[#d4d5cf] bg-white p-5">
-                <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.14em] text-[#62655f]">Đoạn nguồn</p>
-                {isLoading ? <p className="flex items-center gap-2 text-sm text-[#62655f]"><LoaderCircle className="size-4 animate-spin" />Đang tải trang...</p> : error ? <InlineError message={error} /> : <p className="whitespace-pre-line text-sm leading-7 text-[#444841]">{page?.text ?? citation.excerpt}</p>}
+              <h3 className="break-words text-lg font-semibold">{report.file_name}</h3>
+              {error && <div className="mt-4"><InlineError message={error} /></div>}
+
+              <section className="mt-6">
+                <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.14em] text-[#62655f]">Các đoạn nguồn được dùng</p>
+                <div className="space-y-4">
+                  {citations.map(({ id, citation }, index) => (
+                    <article key={id} className="rounded-xl border border-[#d4d5cf] bg-white p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Badge variant="outline" className="rounded-md font-mono">{citationLabel(citation)}</Badge>
+                        <span className="font-mono text-[10px] text-[#777a74]">Nguồn {index + 1}/{citations.length}</span>
+                      </div>
+                      {(citation.chapter || citation.article || citation.clause) && (
+                        <dl className="mt-4 grid grid-cols-[92px_1fr] gap-x-3 gap-y-2 text-sm">
+                          {citation.chapter && <><dt className="text-[#777a74]">Chương/Mục</dt><dd>{citation.chapter}</dd></>}
+                          {citation.article && <><dt className="text-[#777a74]">Điều</dt><dd>{citation.article}</dd></>}
+                          {citation.clause && <><dt className="text-[#777a74]">Khoản</dt><dd>{citation.clause}</dd></>}
+                        </dl>
+                      )}
+                      <p className="mt-4 whitespace-pre-line text-sm leading-7 text-[#444841]">{citation.excerpt}</p>
+                      <p className="mt-3 font-mono text-[10px] text-[#777a74]">Citation ID: {id}</p>
+                    </article>
+                  ))}
+                </div>
               </section>
-              <p className="mt-4 font-mono text-[10px] text-[#777a74]">Citation ID: {citationId}</p>
+
+              <section className="mt-7">
+                <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.14em] text-[#62655f]">Bản xem trang gốc đã dùng</p>
+                {isLoading && (
+                  <p className="flex items-center gap-2 rounded-xl border border-[#d4d5cf] bg-white p-5 text-sm text-[#62655f]"><LoaderCircle className="size-4 animate-spin" />Đang render {pageNumbers.length} trang tài liệu...</p>
+                )}
+                {!isLoading && (
+                  <div className="space-y-5">
+                    {pageNumbers.map((pageNumber) => {
+                      const page = pages[pageNumber];
+                      return (
+                        <article key={pageNumber} className="rounded-xl border border-[#d4d5cf] bg-white p-4 sm:p-5">
+                          <div className="mb-4 flex items-center justify-between gap-3">
+                            <Badge variant="outline" className="rounded-md font-mono">Trang {pageNumber}</Badge>
+                            <span className="text-xs text-[#777a74]">Đối chiếu trực tiếp với bản gốc</span>
+                          </div>
+                          {page?.source_preview ? (
+                            <div className="overflow-hidden rounded-lg border border-[#d8d5cb] bg-[#ecece7]">
+                              <Image
+                                src={page.source_preview.data_url}
+                                alt={`Trang ${pageNumber} của ${report.file_name}`}
+                                width={page.source_preview.width}
+                                height={page.source_preview.height}
+                                unoptimized
+                                className="h-auto w-full"
+                              />
+                            </div>
+                          ) : (
+                            <p className="rounded-lg border border-dashed border-[#d8d5cb] bg-[#fafaf7] px-4 py-5 text-sm leading-6 text-[#62655f]">
+                              Chưa có ảnh trang gốc cho trang này. PDF mới tải lên sẽ có preview; DOCX chỉ hiển thị các đoạn văn bản đã trích xuất ở phía trên.
+                            </p>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             </>
           )}
         </div>
@@ -1556,7 +1553,9 @@ function EmptyState({ title, description, actionLabel, onAction }: { title: stri
 }
 
 function sourceLabel(value: string) {
-  return value === "cited_in_document" ? "Được dẫn trong tài liệu" : value;
+  if (value === "cited_in_document") return "Được dẫn trong tài liệu";
+  if (value === "tavily") return "Tavily (nguồn đã lọc)";
+  return value;
 }
 
 function shortId(value: string) {

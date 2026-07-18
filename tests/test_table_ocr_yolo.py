@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import pipeline
-from pipeline.table_ocr import TableDetector, YoloModelConfigurationError
+from backend import pipeline
+from backend.pipeline.table_ocr import TableDetector, YoloModelConfigurationError
 
 
 class FakeBox:

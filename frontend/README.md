@@ -50,9 +50,7 @@ Các endpoint đang được dùng:
 - `GET /api/v1/documents/{document_id}/pages/{page_number}`
 - `GET /api/v1/history`
 
-Lỗi backend được hiển thị đúng trạng thái và không bị che bằng dữ liệu giả. Chỉ bật
-fallback phục vụ demo khi đặt `NEXT_PUBLIC_ENABLE_MOCK_FALLBACK=true`; UI sẽ hiển
-thị cảnh báo rõ ràng khi chế độ này hoạt động.
+Lỗi backend được hiển thị đúng trạng thái và không bị che bằng dữ liệu giả.
 
 ## Luồng chính
 
@@ -69,12 +67,11 @@ thị cảnh báo rõ ràng khi chế độ này hoạt động.
 
 - `app/page.tsx`: sidebar ba mục, upload, bốn tab Kết quả, chat popup, citation drawer và History.
 - `app/layout.tsx`: metadata, font, root layout.
-- `lib/antipaper-api.ts`: API types, fetch adapter, History, validation và mock fallback có kiểm soát.
+- `lib/antipaper-api.ts`: API types, fetch adapter, History và validation.
 - `components/ui/*`: UI primitives dùng lại trong app.
 
 ## Ghi chú phát triển
 
-- Mock fallback tắt mặc định; chỉ bật rõ bằng `NEXT_PUBLIC_ENABLE_MOCK_FALLBACK=true`.
 - File upload chỉ nhận PDF/DOCX, tối đa 25 MB theo API contract.
 - Q&A không render citation giả khi backend trả `insufficient_evidence=true`.
 - Citation ID phải tồn tại trong `report.citations` mới được hiển thị.

@@ -6,14 +6,9 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 
+from backend.intelligence import NormalizedDocument
 from backend.orchestrator import DocumentOrchestrator, OrchestrationResult, QuestionTrace
-
-try:
-    from intelligence import NormalizedDocument
-    from retrieval import RetrievalIndex
-except ModuleNotFoundError:
-    from src.intelligence import NormalizedDocument
-    from src.retrieval import RetrievalIndex
+from backend.retrieval import RetrievalIndex
 
 
 @dataclass

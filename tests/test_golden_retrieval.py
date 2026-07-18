@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from intelligence import NormalizedDocument
-from retrieval import build_index, evaluate_golden_set, load_golden_cases
+from backend.intelligence import NormalizedDocument
+from backend.retrieval import build_index, evaluate_golden_set, load_golden_cases
 
 
 ROOT = Path(__file__).parents[1]

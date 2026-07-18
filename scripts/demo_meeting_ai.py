@@ -8,11 +8,10 @@ import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-sys.path.insert(0, str(SRC_DIR))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from intelligence import MeetingIntelligenceEngine
-from pipeline.processor import PdfProcessingPipeline
+from backend.intelligence import MeetingIntelligenceEngine
+from backend.pipeline.processor import PdfProcessingPipeline
 
 
 def main() -> None:

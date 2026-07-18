@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from intelligence import NormalizedDocument
-from retrieval import render_citations, validate_citations
+from backend.intelligence import NormalizedDocument
+from backend.retrieval import render_citations, validate_citations
 
 
 def document():

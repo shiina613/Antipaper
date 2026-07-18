@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,15 +12,15 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
-try:
-    from intelligence import NormalizedDocument
-    from retrieval import RetrievalIndex
-except ModuleNotFoundError:
-    from src.intelligence import NormalizedDocument
-    from src.retrieval import RetrievalIndex
+import fitz
+
+from .intelligence import NormalizedDocument
+from .retrieval import RetrievalIndex
 
 from .errors import ApiError
+from .history import TaskHistoryStore
 from .orchestrator import (
     DocumentOrchestrator,
     ProcessedDocument,
@@ -29,10 +30,15 @@ from .orchestrator import (
 from .schemas import (
     DocumentReport,
     DocumentStatus,
+    ErrorDetail,
     PageBlock,
     PageResponse,
     QuestionResponse,
+    SourcePreview,
     StatusResponse,
+    TaskHistoryItem,
+    TaskHistoryPage,
+    TaskType,
     UploadResponse,
 )
 
@@ -40,6 +46,10 @@ from .schemas import (
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 PROCESSING_WAIT_TIMEOUT_SECONDS = 15.0
+# Questions now retain their complete, question-specific evidence provenance.
+# Bumping the schema prevents cached reports with the earlier single-paragraph
+# summaries from rehydrating after a backend restart.
+ARTIFACT_SCHEMA_VERSION = 9
 STAGE_QUEUED = "queued"
 STAGE_PARSING = "parsing"
 STAGE_GENERATING = "generating"
@@ -89,11 +99,16 @@ class DocumentRecord:
 class DocumentStore:
     """Thread-safe store and scheduler for uploaded documents."""
 
-    def __init__(self, artifact_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        artifact_root: Path | None = None,
+        transition_listener: Callable[[DocumentRecord], None] | None = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._documents: dict[str, DocumentRecord] = {}
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="antipaper-job")
         self._orchestrator = DocumentOrchestrator()
+        self._transition_listener = transition_listener
         root = artifact_root or Path(os.getenv("ARTIFACT_DIR", ".artifacts"))
         self._artifact_root = (root.expanduser() / "documents").resolve()
         self._artifact_root.mkdir(parents=True, exist_ok=True)
@@ -143,8 +158,15 @@ class DocumentStore:
 
     def ensure_processed(self, document_id: str) -> DocumentRecord:
         record = self.get(document_id)
-        if record.status in {"queued", "processing"}:
-            self._wait_for_completion(record)
+        try:
+            if record.status in {"queued", "processing"}:
+                self._wait_for_completion(record)
+        finally:
+            # Reconcile persistent task history after observing the worker.
+            # This must also run when the record became terminal immediately
+            # before the status check: its earlier callback may have happened
+            # before submit_document attached the task to the document.
+            self._notify_transition(record)
         return self.get(document_id)
 
     def get(self, document_id: str) -> DocumentRecord:
@@ -198,6 +220,7 @@ class DocumentStore:
             record.processed_at = datetime.now(timezone.utc)
             record.updated_at = datetime.now(timezone.utc)
             self._persist_artifacts(record)
+            self._notify_transition(record)
         except ApiError as exc:
             self._mark_failed(record, exc.code, exc.message)
             raise
@@ -217,13 +240,21 @@ class DocumentStore:
     def get_status(self, document_id: str) -> StatusResponse:
         record = self.get(document_id)
         elapsed = (datetime.now(timezone.utc) - record.created_at).total_seconds()
+        error = None
+        if record.error:
+            api_error = self._api_error_from_record_error(record.error)
+            error = ErrorDetail(
+                code=api_error.code,
+                message=api_error.message,
+                retryable=api_error.retryable,
+            )
         return StatusResponse(
             document_id=record.document_id,
             status=record.status,
             stage=record.stage,
             progress=record.progress,
             elapsed_seconds=round(max(elapsed, 0.0), 3),
-            error=record.error,
+            error=error,
         )
 
     def get_report(self, document_id: str) -> DocumentReport:
@@ -263,6 +294,7 @@ class DocumentStore:
             page_number=page.page_number,
             text=page.text,
             blocks=page.blocks,
+            source_preview=self._render_source_preview(record, page_number),
         )
 
     def answer_question(self, document_id: str, question: str) -> QuestionResponse:
@@ -293,6 +325,7 @@ class DocumentStore:
         record.error = None
         record.updated_at = datetime.now(timezone.utc)
         record.future = self._executor.submit(self.process_document, record.document_id)
+        self._notify_transition(record)
 
     def _wait_for_completion(
         self,
@@ -320,6 +353,7 @@ class DocumentStore:
         record.progress = progress
         record.error = None
         record.updated_at = datetime.now(timezone.utc)
+        self._notify_transition(record)
 
     def _mark_failed(self, record: DocumentRecord, code: str, message: str) -> None:
         record.status = "failed"
@@ -328,6 +362,15 @@ class DocumentStore:
         record.error = f"{code}: {message}"
         record.updated_at = datetime.now(timezone.utc)
         self._persist_artifacts(record)
+        self._notify_transition(record)
+
+    def _notify_transition(self, record: DocumentRecord) -> None:
+        if self._transition_listener is None:
+            return
+        try:
+            self._transition_listener(record)
+        except Exception:  # pragma: no cover - history must not break processing
+            return
 
     def _validate_orchestration_result(
         self,
@@ -393,10 +436,39 @@ class DocumentStore:
     def _normalized_path(self, document_id: str) -> Path:
         return self._artifact_dir(document_id) / "normalized.json"
 
+    def _source_path(self, document_id: str) -> Path:
+        return self._artifact_dir(document_id) / "source.bin"
+
+    def _render_source_preview(
+        self,
+        record: DocumentRecord,
+        page_number: int,
+    ) -> SourcePreview | None:
+        if Path(record.file_name).suffix.lower() != ".pdf" or not record.file_bytes:
+            return None
+        try:
+            with fitz.open(stream=record.file_bytes, filetype="pdf") as document:
+                if page_number < 1 or page_number > document.page_count:
+                    return None
+                page = document[page_number - 1]
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.35, 1.35), alpha=False)
+                encoded = base64.b64encode(pixmap.tobytes("png")).decode("ascii")
+                return SourcePreview(
+                    mime_type="image/png",
+                    data_url=f"data:image/png;base64,{encoded}",
+                    width=pixmap.width,
+                    height=pixmap.height,
+                    page_number=page_number,
+                )
+        except Exception:
+            return None
+
     def _persist_artifacts(self, record: DocumentRecord) -> None:
         try:
             artifact_dir = self._artifact_dir(record.document_id)
             artifact_dir.mkdir(parents=True, exist_ok=True)
+            if record.file_bytes:
+                self._source_path(record.document_id).write_bytes(record.file_bytes)
             self._manifest_path(record.document_id).write_text(
                 json.dumps(self._serialize_manifest(record), ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -426,16 +498,19 @@ class DocumentStore:
         report_path = self._report_path(document_id)
         pages_path = self._pages_path(document_id)
         normalized_path = self._normalized_path(document_id)
+        source_path = self._source_path(document_id)
         if not manifest_path.exists():
             return None
 
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if int(manifest.get("artifact_schema_version", 0)) != ARTIFACT_SCHEMA_VERSION:
+                return None
             record = DocumentRecord(
                 document_id=document_id,
                 file_name=str(manifest["file_name"]),
                 file_size_bytes=int(manifest["file_size_bytes"]),
-                file_bytes=b"",
+                file_bytes=source_path.read_bytes() if source_path.exists() else b"",
                 status=str(manifest["status"]),
                 stage=str(manifest["stage"]),
                 progress=int(manifest["progress"]),
@@ -477,6 +552,7 @@ class DocumentStore:
     def _serialize_manifest(self, record: DocumentRecord) -> dict[str, object]:
         return {
             "document_id": record.document_id,
+            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
             "file_name": record.file_name,
             "file_size_bytes": record.file_size_bytes,
             "status": record.status,
@@ -539,14 +615,78 @@ class AntipaperService:
     """Facade used by the FastAPI routes."""
 
     def __init__(self, artifact_root: Path | None = None) -> None:
-        self.store = DocumentStore(artifact_root=artifact_root)
+        root = (artifact_root or Path(os.getenv("ARTIFACT_DIR", ".artifacts"))).expanduser()
+        root = root.resolve()
+        self.history = TaskHistoryStore(root / "history.sqlite3")
+        self.store = DocumentStore(
+            artifact_root=root,
+            transition_listener=self._record_document_transition,
+        )
 
-    def submit_document(self, file_name: str, file_bytes: bytes) -> UploadResponse:
-        record, cached = self.store.submit_upload(file_name, file_bytes)
+    def submit_document(
+        self,
+        file_name: str,
+        file_bytes: bytes,
+        user_id: str = "demo-user",
+    ) -> UploadResponse:
+        # Create the activity row before validation/processing. This makes the
+        # history a faithful audit of user actions: rejected uploads (for
+        # example, unsupported extensions or oversized payloads) are still
+        # represented as failed tasks even though no document_id exists.
+        task = self.history.create_task(
+            user_id=user_id,
+            task_type="document_processing",
+            display_name=file_name,
+            status="queued",
+            stage=STAGE_QUEUED,
+            progress=0,
+        )
+
+        try:
+            record, cached = self.store.submit_upload(file_name, file_bytes)
+        except ApiError as exc:
+            self.history.update_task(
+                task.task_id,
+                status="failed",
+                stage=STAGE_FAILED,
+                progress=100,
+                error_code=exc.code,
+                error_message=exc.message,
+            )
+            raise
+        except Exception as exc:  # pragma: no cover - defensive persistence
+            self.history.update_task(
+                task.task_id,
+                status="failed",
+                stage=STAGE_FAILED,
+                progress=100,
+                error_code="PROCESSING_FAILED",
+                error_message=str(exc),
+            )
+            raise
+
+        error_code: str | None = None
+        error_message: str | None = None
+        if record.error:
+            error_code, _, error_message = record.error.partition(": ")
+        # Attach the document identity and reconcile any worker transitions.
+        # The worker may finish between submit_upload and this callback, so the
+        # reconciliation must always run after the task row exists.
+        self.history.attach_document(
+            task.task_id,
+            document_id=record.document_id,
+            cached=cached,
+            error_code=error_code,
+            error_message=error_message,
+        )
+        # Reconcile with the latest state in case the worker already advanced
+        # through one or more transitions while the upload was being attached.
+        self._record_document_transition(record)
         return UploadResponse(
             document_id=record.document_id,
             status=record.status,
             cached=cached,
+            task_id=task.task_id,
         )
 
     def process_document(self, document_id: str) -> None:
@@ -561,5 +701,89 @@ class AntipaperService:
     def get_page(self, document_id: str, page_number: int) -> PageResponse:
         return self.store.get_page(document_id, page_number)
 
-    def answer_question(self, document_id: str, question: str) -> QuestionResponse:
-        return self.store.answer_question(document_id, question)
+    def answer_question(
+        self,
+        document_id: str,
+        question: str,
+        user_id: str = "demo-user",
+    ) -> QuestionResponse:
+        display_name = " ".join(question.split())[:160]
+        task = self.history.create_task(
+            user_id=user_id,
+            task_type="question_answer",
+            display_name=display_name,
+            document_id=document_id,
+            status="processing",
+            stage="answering",
+            progress=50,
+        )
+        try:
+            response = self.store.answer_question(document_id, question)
+        except ApiError as exc:
+            self.history.update_task(
+                task.task_id,
+                status="failed",
+                stage="failed",
+                progress=100,
+                error_code=exc.code,
+                error_message=exc.message,
+            )
+            raise
+        except Exception as exc:
+            self.history.update_task(
+                task.task_id,
+                status="failed",
+                stage="failed",
+                progress=100,
+                error_code="PROCESSING_FAILED",
+                error_message=str(exc),
+            )
+            raise
+        self.history.update_task(
+            task.task_id,
+            status="completed",
+            stage="ready",
+            progress=100,
+            duration_seconds=response.latency_ms / 1000,
+        )
+        return response.model_copy(update={"task_id": task.task_id})
+
+    def list_history(
+        self,
+        *,
+        user_id: str,
+        limit: int = 20,
+        offset: int = 0,
+        status: DocumentStatus | None = None,
+        task_type: TaskType | None = None,
+        from_at: datetime | None = None,
+        to_at: datetime | None = None,
+    ) -> TaskHistoryPage:
+        return self.history.list_tasks(
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+            status=status,
+            task_type=task_type,
+            from_at=from_at,
+            to_at=to_at,
+        )
+
+    def get_history(self, *, user_id: str, task_id: str) -> TaskHistoryItem:
+        return self.history.get_task(user_id=user_id, task_id=task_id)
+
+    def _record_document_transition(self, record: DocumentRecord) -> None:
+        error_code: str | None = None
+        error_message: str | None = None
+        if record.error:
+            error_code, _, error_message = record.error.partition(": ")
+        duration = record.processing_seconds if record.status == "completed" else None
+        self.history.update_open_document_tasks(
+            document_id=record.document_id,
+            status=record.status,
+            stage=record.stage,
+            progress=record.progress,
+            error_code=error_code,
+            error_message=error_message,
+            duration_seconds=duration,
+        )

@@ -4,8 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from intelligence import NormalizedDocument
-from retrieval import GroundedQAService, build_index
+from backend.intelligence import NormalizedDocument
+from backend.retrieval import GroundedQAService, build_index
 
 
 def document():

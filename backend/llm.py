@@ -52,9 +52,24 @@ class OpenAICompatibleLLMClient:
         messages: list[dict[str, str]],
         response_model: type[ResponseT],
     ) -> ResponseT:
+        schema = json.dumps(
+            response_model.model_json_schema(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        request_messages = [dict(message) for message in messages]
+        request_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "JSON trả về phải tuân thủ chính xác JSON Schema sau; không đổi tên "
+                    f"field và không thêm văn bản ngoài JSON: {schema}"
+                ),
+            }
+        )
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": request_messages,
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
@@ -93,10 +108,11 @@ def build_shared_llm_client() -> OpenAICompatibleLLMClient | None:
     model = os.getenv("LLM_MODEL", "").strip()
     if not api_key or not model:
         return None
+    base_url = os.getenv("LLM_BASE_URL", "").strip() or "https://api.openai.com/v1"
     return OpenAICompatibleLLMClient(
         api_key=api_key,
         model=model,
-        base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
+        base_url=base_url,
         timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "45")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
     )

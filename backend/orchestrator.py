@@ -14,37 +14,26 @@ import zipfile
 import fitz
 from pydantic import BaseModel
 
-try:
-    from intelligence import (
-        Citation as DomainCitation,
-        DocumentChunk,
-        IntelligenceReport,
-        MeetingIntelligenceEngine,
-        MeetingIntelligenceReport,
-        NormalizedDocument,
-        build_intelligence,
-    )
-    from retrieval import GroundedQAService, RetrievalIndex, build_index
-except ModuleNotFoundError:  # Running backend from repo root without pytest PYTHONPATH.
-    from src.intelligence import (
-        Citation as DomainCitation,
-        DocumentChunk,
-        IntelligenceReport,
-        MeetingIntelligenceEngine,
-        MeetingIntelligenceReport,
-        NormalizedDocument,
-        build_intelligence,
-    )
-    from src.retrieval import GroundedQAService, RetrievalIndex, build_index
+from .intelligence import (
+    Citation as DomainCitation,
+    DocumentChunk,
+    IntelligenceReport,
+    MeetingIntelligenceEngine,
+    MeetingIntelligenceReport,
+    NormalizedDocument,
+    build_intelligence,
+)
+from .retrieval import GroundedQAService, RetrievalIndex, build_index
 
 from .llm import build_shared_llm_client
+from .logging import get_logger
+from .related_documents import RelatedDocumentFinder
 from .schemas import (
     Citation,
     DocumentReport,
     DocumentSummary,
     PageBlock,
     QuestionResponse,
-    RelatedDocument,
     SuggestedQuestion,
     SummaryItem,
     TermItem,
@@ -53,6 +42,7 @@ from .schemas import (
 
 _WORD_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 _DEFAULT_SAMPLE_QUESTION = "What are the main points in this document?"
+logger = get_logger("orchestrator")
 
 
 @dataclass(frozen=True)
@@ -109,6 +99,7 @@ class DocumentOrchestrator:
         call_llm: Callable[..., Any] | None = None,
         embedding: Callable[[str], Any] | None = None,
         use_configured_llm: bool = True,
+        related_document_finder: RelatedDocumentFinder | None = None,
     ) -> None:
         self._engine = MeetingIntelligenceEngine()
         self._call_llm = (
@@ -117,6 +108,11 @@ class DocumentOrchestrator:
             else build_shared_llm_client() if use_configured_llm else None
         )
         self._embedding = embedding
+        self._related_document_finder = (
+            related_document_finder
+            if related_document_finder is not None
+            else RelatedDocumentFinder.from_env()
+        )
 
     def process(self, *, document_id: str, file_name: str, file_bytes: bytes) -> OrchestrationResult:
         processed_document, normalized_document = self.ingest(
@@ -301,7 +297,7 @@ class DocumentOrchestrator:
                 chunks.append(chunk)
                 citations[chunk_id] = DomainCitation(
                     page=page.page_number,
-                    excerpt=self._shorten(paragraph, 240),
+                    excerpt=self._shorten(paragraph, 600),
                 )
         return NormalizedDocument(
             document_id=document_id,
@@ -333,13 +329,18 @@ class DocumentOrchestrator:
                     normalized_document=normalized_document,
                     intelligence=intelligence,
                 )
-            except Exception:
+            except Exception as exc:
                 # Availability-first fallback is explicit in the response and is
                 # rejected by release evaluation, so it cannot silently pass.
-                pass
+                logger.exception(
+                    "LLM report generation failed for document_id=%s; using explicit heuristic fallback: %s",
+                    document_id,
+                    exc,
+                )
         return self._build_legacy_report(
             document_id=document_id,
             processed_document=processed_document,
+            normalized_document=normalized_document,
             file_name=file_name,
         )
 
@@ -377,9 +378,9 @@ class DocumentOrchestrator:
                 TermItem(
                     term=term.term,
                     explanation=term.explanation,
-                    citation_ids=list(term.citation_ids),
+                    citation_ids=list(term.citation_ids)[:1],
                 )
-                for term in intelligence.terms
+                for term in intelligence.terms[:100]
             ],
             suggested_questions=[
                 SuggestedQuestion(
@@ -389,7 +390,7 @@ class DocumentOrchestrator:
                 )
                 for question in intelligence.suggested_questions
             ],
-            related_documents=self._build_related_documents(citations),
+            related_documents=self._related_document_finder.find(normalized_document),
             citations=citations,
             generation_mode="llm",
             quality=intelligence.quality.model_dump(mode="json"),
@@ -400,6 +401,7 @@ class DocumentOrchestrator:
         *,
         document_id: str,
         processed_document: ProcessedDocument,
+        normalized_document: NormalizedDocument,
         file_name: str,
     ) -> DocumentReport:
         intelligence: MeetingIntelligenceReport = self._engine.build_report(
@@ -430,9 +432,9 @@ class DocumentOrchestrator:
             TermItem(
                 term=term.term,
                 explanation=term.explanation,
-                citation_ids=self._pages_to_citation_ids(term.pages, citation_map),
+                citation_ids=self._pages_to_citation_ids(term.pages, citation_map)[:1],
             )
-            for term in intelligence.terms
+            for term in intelligence.terms[:100]
         ]
 
         suggested_questions = [
@@ -455,25 +457,11 @@ class DocumentOrchestrator:
             summary=summary,
             terms=terms,
             suggested_questions=suggested_questions,
-            related_documents=self._build_related_documents(citation_map),
+            related_documents=self._related_document_finder.find(normalized_document),
             citations=citation_map,
             generation_mode="heuristic_fallback",
             quality=None,
         )
-
-    def _build_related_documents(self, citation_map: dict[str, Citation]) -> list[RelatedDocument]:
-        if not citation_map:
-            return []
-        first_id = next(iter(citation_map))
-        return [
-            RelatedDocument(
-                title="Document source excerpt",
-                document_number=f"PAGE-{citation_map[first_id].page}",
-                source="cited_in_document",
-                reason="Source evidence identified during processing.",
-                citation_ids=[first_id],
-            )
-        ]
 
     def _build_citation_map(self, processed_document: ProcessedDocument) -> dict[str, Citation]:
         citation_map: dict[str, Citation] = {}
@@ -484,7 +472,7 @@ class DocumentOrchestrator:
                 chapter=None,
                 article=None,
                 clause=None,
-                excerpt=self._shorten(page.content, 240),
+                excerpt=self._shorten(page.content, 600),
             )
         return citation_map
 
@@ -494,13 +482,25 @@ class DocumentOrchestrator:
         citation_map: dict[str, Citation],
         pages: list[int],
     ) -> list[SummaryItem]:
+        return [
+            SummaryItem(
+                text=item,
+                citation_ids=self._summary_item_citation_ids(item, citation_map, pages),
+            )
+            for item in items
+        ]
+
+    def _summary_item_citation_ids(
+        self,
+        item: str,
+        citation_map: dict[str, Citation],
+        fallback_pages: list[int],
+    ) -> list[str]:
+        pages = self._pages_from_labels([item]) or fallback_pages
         citation_ids = self._pages_to_citation_ids(pages, citation_map)
         if not citation_ids and citation_map:
             citation_ids = [next(iter(citation_map))]
-        return [
-            SummaryItem(text=item, citation_ids=citation_ids[:1] if citation_ids else [])
-            for item in items
-        ]
+        return citation_ids[:6]
 
     def _pages_to_citation_ids(self, pages: list[int], citation_map: dict[str, Citation]) -> list[str]:
         result: list[str] = []
@@ -513,9 +513,10 @@ class DocumentOrchestrator:
     def _pages_from_labels(self, labels: list[str]) -> list[int]:
         pages: list[int] = []
         for label in labels:
-            match = re.search(r"Trang\s+(\d+)", label)
-            if match:
-                pages.append(int(match.group(1)))
+            for match in re.findall(r"Trang\s+(\d+)", label, flags=re.IGNORECASE):
+                page = int(match)
+                if page not in pages:
+                    pages.append(page)
         return pages
 
     def _question_citations_to_ids(self, citations: list[str], page_count: int) -> list[str]:

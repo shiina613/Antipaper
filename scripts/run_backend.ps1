@@ -1,5 +1,6 @@
 param(
-    [string]$Host = "127.0.0.1",
+    [Alias("Host")]
+    [string]$BindHost = "127.0.0.1",
     [int]$Port = 8000,
     [switch]$Reload
 )
@@ -41,9 +42,9 @@ if ($null -eq $pythonCommand) {
     throw "Could not find a Python runtime. Create .venv or install Python."
 }
 
-$args = @("-m", "backend", "--host", $Host, "--port", $Port)
+$backendArgs = @("-m", "backend", "--host", $BindHost, "--port", $Port)
 if ($Reload) {
-    $args += "--reload"
+    $backendArgs += "--reload"
 }
 
-& $pythonCommand @args
+& $pythonCommand @backendArgs

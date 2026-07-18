@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from io import BytesIO
 import time
 from types import SimpleNamespace
 
+import fitz
 from fastapi.testclient import TestClient
 
 from backend.errors import ApiError
@@ -12,6 +14,16 @@ from backend.service import AntipaperService
 
 
 client = TestClient(app)
+
+
+def make_pdf_bytes(text: str) -> bytes:
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), text)
+    buffer = BytesIO()
+    document.save(buffer)
+    document.close()
+    return buffer.getvalue()
 
 
 def test_health_endpoint_works() -> None:
@@ -65,6 +77,46 @@ def test_upload_status_report_page_and_question_flow() -> None:
     assert "citation_ids" in answer_payload
 
 
+def test_report_terms_are_capped_and_have_single_representative_citation() -> None:
+    text = ". ".join(
+        [
+            "nghị quyết",
+            "quyết định",
+            "ủy ban nhân dân",
+            "hội đồng nhân dân",
+            "tờ trình",
+            "đề án",
+            "dự thảo",
+            "căn cứ pháp lý",
+            "ngân sách",
+            "lộ trình",
+            "trách nhiệm",
+            "tác động",
+            "rủi ro",
+            "tự luận",
+            "trắc nghiệm",
+            "nghị luận xã hội",
+            "kinh tế học vĩ mô",
+            "triết học",
+            "lý luận nhà nước và pháp luật",
+            "tỷ trọng đánh giá",
+            "vận dụng",
+        ]
+    )
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("many-terms.pdf", f"%PDF-1.4 {text}".encode("utf-8"), "application/pdf")},
+    )
+    document_id = response.json()["document_id"]
+
+    report = client.get(f"/api/v1/documents/{document_id}/report")
+
+    assert report.status_code == 200
+    terms = report.json()["terms"]
+    assert 10 <= len(terms) <= 100
+    assert all(len(term["citation_ids"]) <= 1 for term in terms)
+
+
 def test_second_upload_hits_cache() -> None:
     first = client.post(
         "/api/v1/documents",
@@ -109,6 +161,27 @@ def test_artifact_cache_survives_new_service_instance(tmp_path) -> None:
     assert report.document_id == document_id
 
 
+def test_page_api_returns_source_preview_for_pdf_and_rehydrated_cache(tmp_path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    pdf_bytes = make_pdf_bytes(
+        "Chu tri can quyet dinh phuong an trien khai va giao trach nhiem truoc ngay 30/09/2026."
+    )
+    first_service = AntipaperService(artifact_root=artifact_root)
+    upload = first_service.submit_document("decision-preview.pdf", pdf_bytes)
+    first_page = first_service.get_page(upload.document_id, 1)
+
+    assert first_page.source_preview is not None
+    assert first_page.source_preview.data_url.startswith("data:image/png;base64,")
+    assert first_page.source_preview.width > 0
+    assert first_page.source_preview.height > 0
+
+    rehydrated_service = AntipaperService(artifact_root=artifact_root)
+    rehydrated_page = rehydrated_service.get_page(upload.document_id, 1)
+
+    assert rehydrated_page.source_preview is not None
+    assert rehydrated_page.source_preview.data_url.startswith("data:image/png;base64,")
+
+
 def test_too_large_file_returns_standard_error_envelope() -> None:
     response = client.post(
         "/api/v1/documents",
@@ -136,7 +209,9 @@ def test_broken_docx_marks_document_as_failed() -> None:
     assert status.status_code == 200
     status_payload = status.json()
     assert status_payload["status"] == "failed"
-    assert status_payload["error"] is not None
+    assert status_payload["error"]["code"] == "PROCESSING_FAILED"
+    assert status_payload["error"]["message"]
+    assert status_payload["error"]["retryable"] is True
 
 
 def test_report_timeout_returns_model_timeout(monkeypatch) -> None:

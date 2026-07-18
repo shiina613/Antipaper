@@ -7,8 +7,8 @@ from backend.orchestrator import DocumentOrchestrator
 from backend.service import AntipaperService
 from evals.adapters import BenchmarkApplication
 from evals.dataset import load_release_records
-from intelligence import IntelligenceDraft
-from retrieval import load_golden_cases
+from backend.intelligence import IntelligenceDraft
+from backend.retrieval import load_golden_cases
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +44,14 @@ def test_existing_golden_loader_reuses_release_jsonl() -> None:
     assert cases[0].expected_output
 
 
-def test_backend_persists_normalized_document_and_uses_retrieval(tmp_path) -> None:
+def test_backend_persists_normalized_document_and_uses_retrieval(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    # This case explicitly verifies the offline fallback path and must not
+    # inherit a developer's configured model credentials from .env.
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
     source = ROOT / "data" / "bien_ban_hop.pdf"
     service = AntipaperService(artifact_root=tmp_path)
     upload = service.submit_document(source.name, source.read_bytes())

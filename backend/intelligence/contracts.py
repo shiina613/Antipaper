@@ -123,7 +123,7 @@ class IntelligenceDraft(ContractModel):
     """Structured output requested from both map and reduce LLM stages."""
 
     summary: IntelligenceSummary = Field(default_factory=IntelligenceSummary)
-    terms: list[TermExplanation] = Field(default_factory=list)
+    terms: list[TermExplanation] = Field(default_factory=list, max_length=100)
     suggested_questions: list[SuggestedQuestion] = Field(default_factory=list)
 
 

@@ -1,151 +1,143 @@
-# Antipaper
+﻿# Antipaper
 
-Trợ lý AI giúp cán bộ đọc nhanh tài liệu họp dài, chuẩn bị câu hỏi và tra cứu bằng tiếng Việt với citation đến trang/mục/điều.
+Trá»£ lÃ½ AI giÃºp cÃ¡n bá»™ Ä‘á»c nhanh tÃ i liá»‡u há»p dÃ i, chuáº©n bá»‹ cÃ¢u há»i vÃ  tra cá»©u báº±ng tiáº¿ng Viá»‡t vá»›i citation Ä‘áº¿n trang/má»¥c/Ä‘iá»u.
 <img width="1939" height="4097" alt="mermaid-diagram-2026-07-18-075329" src="https://github.com/user-attachments/assets/e50b2b98-9fe2-4cdd-8f85-1cd4eb7334f4" />
 
-## Trạng thái hiện tại
+## Tráº¡ng thÃ¡i hiá»‡n táº¡i
 
-Kho mã nguồn đang ở mức khung kỹ thuật:
+Kho mÃ£ nguá»“n Ä‘ang á»Ÿ má»©c khung ká»¹ thuáº­t:
 
-- Đã có luồng PDF bằng PyMuPDF, Streamlit MVP và giao diện Next.js tĩnh.
-- Đã có FastAPI job/cache, canonical document contract, grounded Q&A và citation cấp trang/mục/điều.
-- Report dùng LLM map-reduce khi cấu hình model; heuristic chỉ là fallback có gắn nhãn và không được qua release gate.
-- Đã có benchmark deterministic và DeepEval; semantic embedding và DOCX production vẫn là hạng mục tiếp theo.
-- Kho `data/` đã có nhiều PDF từ 40 trang; tài liệu demo được chọn qua `DEMO_DOCUMENT_PATH`, không phụ thuộc tên file.
+- Da co luong PDF bang PyMuPDF, FastAPI backend va giao dien Next.js tich hop.
+- ÄÃ£ cÃ³ FastAPI job/cache, canonical document contract, grounded Q&A vÃ  citation cáº¥p trang/má»¥c/Ä‘iá»u.
+- Report dÃ¹ng LLM map-reduce khi cáº¥u hÃ¬nh model; heuristic chá»‰ lÃ  fallback cÃ³ gáº¯n nhÃ£n vÃ  khÃ´ng Ä‘Æ°á»£c qua release gate.
+- ÄÃ£ cÃ³ benchmark deterministic vÃ  DeepEval; semantic embedding vÃ  DOCX production váº«n lÃ  háº¡ng má»¥c tiáº¿p theo.
+- Kho `data/` Ä‘Ã£ cÃ³ nhiá»u PDF tá»« 40 trang; tÃ i liá»‡u demo Ä‘Æ°á»£c chá»n qua `DEMO_DOCUMENT_PATH`, khÃ´ng phá»¥ thuá»™c tÃªn file.
 
-Xem trạng thái chi tiết tại [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGRESS.md).
+Xem tráº¡ng thÃ¡i chi tiáº¿t táº¡i [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGRESS.md).
 
-## Tài liệu làm việc
+## TÃ i liá»‡u lÃ m viá»‡c
 
-| Tài liệu | Mục đích |
+| TÃ i liá»‡u | Má»¥c Ä‘Ã­ch |
 |---|---|
-| [problem.txt](problem.txt) | Đề bài và phạm vi sản phẩm |
-| [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) | Người dùng, yêu cầu và phạm vi MVP |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc xử lý và quyết định kỹ thuật |
-| [docs/TECH_STACK.md](docs/TECH_STACK.md) | Ngăn xếp công nghệ dùng trong 48 giờ |
-| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Hợp đồng tích hợp backend–frontend |
-| [docs/BUILD_PLAN_48H.md](docs/BUILD_PLAN_48H.md) | Timeline, mốc khóa và phương án dự phòng |
-| [docs/ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Cách kiểm chứng tiêu chí nộp bài |
-| [docs/AI_COLLABORATION_LOG.md](docs/AI_COLLABORATION_LOG.md) | Nhật ký và bằng chứng cộng tác với các công cụ AI |
-| [docs/ONE_PAGE_DECK.md](docs/ONE_PAGE_DECK.md) | Nội dung deck một trang |
-| `docs/TASKS_*.md` | Việc cụ thể của từng thành viên |
+| [problem.txt](problem.txt) | Äá» bÃ i vÃ  pháº¡m vi sáº£n pháº©m |
+| [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) | NgÆ°á»i dÃ¹ng, yÃªu cáº§u vÃ  pháº¡m vi MVP |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiáº¿n trÃºc xá»­ lÃ½ vÃ  quyáº¿t Ä‘á»‹nh ká»¹ thuáº­t |
+| [docs/TECH_STACK.md](docs/TECH_STACK.md) | NgÄƒn xáº¿p cÃ´ng nghá»‡ dÃ¹ng trong 48 giá» |
+| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Há»£p Ä‘á»“ng tÃ­ch há»£p backendâ€“frontend |
+| [docs/BUILD_PLAN_48H.md](docs/BUILD_PLAN_48H.md) | Timeline, má»‘c khÃ³a vÃ  phÆ°Æ¡ng Ã¡n dá»± phÃ²ng |
+| [docs/ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | CÃ¡ch kiá»ƒm chá»©ng tiÃªu chÃ­ ná»™p bÃ i |
+| [docs/AI_COLLABORATION_LOG.md](docs/AI_COLLABORATION_LOG.md) | Nháº­t kÃ½ vÃ  báº±ng chá»©ng cá»™ng tÃ¡c vá»›i cÃ¡c cÃ´ng cá»¥ AI |
+| [docs/ONE_PAGE_DECK.md](docs/ONE_PAGE_DECK.md) | Ná»™i dung deck má»™t trang |
+| `docs/TASKS_*.md` | Viá»‡c cá»¥ thá»ƒ cá»§a tá»«ng thÃ nh viÃªn |
 
-## Phân công 5 người
+## PhÃ¢n cÃ´ng 5 ngÆ°á»i
 
-| Thành viên | Mảng phụ trách | Chi tiết |
+| ThÃ nh viÃªn | Máº£ng phá»¥ trÃ¡ch | Chi tiáº¿t |
 |---|---|---|
-| Hậu | Tóm tắt, thuật ngữ, câu hỏi AI và OCR fallback | [TASKS_HAU.md](docs/TASKS_HAU.md) |
-| Tuấn | Nhập PDF/DOCX, parse cấu trúc, citation và LLM client | [TASKS_TUAN.md](docs/TASKS_TUAN.md) |
-| Tùng | Giao diện, tích hợp, benchmark nghiệm thu, demo và deck | [TASKS_TUNG.md](docs/TASKS_TUNG.md) |
-| Tùng Anh | Truy hồi, Q&A, văn bản liên quan, kiểm tra citation | [TASKS_TUNG_ANH.md](docs/TASKS_TUNG_ANH.md) |
-| Hưng | FastAPI, job/cache, xử lý bottleneck runtime và đóng gói backend | [TASKS_HUNG.md](docs/TASKS_HUNG.md) |
+| Háº­u | TÃ³m táº¯t, thuáº­t ngá»¯, cÃ¢u há»i AI vÃ  OCR fallback | [TASKS_HAU.md](docs/TASKS_HAU.md) |
+| Tuáº¥n | Nháº­p PDF/DOCX, parse cáº¥u trÃºc, citation vÃ  LLM client | [TASKS_TUAN.md](docs/TASKS_TUAN.md) |
+| TÃ¹ng | Giao diá»‡n, tÃ­ch há»£p, benchmark nghiá»‡m thu, demo vÃ  deck | [TASKS_TUNG.md](docs/TASKS_TUNG.md) |
+| TÃ¹ng Anh | Truy há»“i, Q&A, vÄƒn báº£n liÃªn quan, kiá»ƒm tra citation | [TASKS_TUNG_ANH.md](docs/TASKS_TUNG_ANH.md) |
+| HÆ°ng | FastAPI, job/cache, xá»­ lÃ½ bottleneck runtime vÃ  Ä‘Ã³ng gÃ³i backend | [TASKS_HUNG.md](docs/TASKS_HUNG.md) |
 
-## Cấu trúc chính
+## Cáº¥u trÃºc chÃ­nh
 
 ```text
 Antipaper/
-├── backend/              # FastAPI, orchestration, artifact cache
-├── data/                 # PDF mẫu công khai
-├── docs/                 # Kiến trúc, kế hoạch, kiểm thử và task
-├── evals/                # Release dataset, adapters và DeepEval suite
-├── evidence/             # Kết quả benchmark có truy vết
+├── backend/              # FastAPI, orchestration, pipeline, intelligence, retrieval
+├── data/                 # PDF mau cong khai
+├── docs/                 # Kien truc, ke hoach, kiem thu va task
+├── evals/                # Release dataset, adapters va DeepEval suite
+├── evidence/             # Ket qua benchmark co truy vet
 ├── frontend/             # Next.js dashboard
-├── scripts/              # Script demo/benchmark
-├── src/intelligence/     # Tóm tắt, thuật ngữ, câu hỏi, Q&A
-├── src/pipeline/         # Trích xuất và chuẩn hóa tài liệu
-└── app.py                # Streamlit MVP dự phòng
+└── scripts/              # Script demo/benchmark
 ```
 
-## Chạy baseline hiện tại
+## Cháº¡y tÃ­ch há»£p backend vÃ  frontend
+
+YÃªu cáº§u Python 3.12 vÃ  Node.js 20+. Cá»­a sá»• PowerShell thá»© nháº¥t:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-cuda.txt
-python download_yolo_table_weights.py
-streamlit run app.py
+python -m pip install -r backend\requirements.txt
+Copy-Item .env.example .env
+.\scripts\run_backend.ps1 -Reload
 ```
 
-Máy Windows có GPU NVIDIA phải dùng `requirements-cuda.txt`; `requirements.txt`
-không pin CUDA và có thể khiến dependency của Ultralytics cài PyTorch CPU-only.
-Luôn gọi pip qua `python -m pip` sau khi kích hoạt `.venv` để tránh vô tình cài
-vào Python hệ thống (đặc biệt không dùng Python 3.14 cho môi trường demo).
-Nếu `.venv` được uv tạo và không có module `pip`, dùng lệnh tương đương:
+Backend Ä‘á»c `.env` khi khá»Ÿi Ä‘á»™ng vÃ  phá»¥c vá»¥ táº¡i `http://127.0.0.1:8000`. KhÃ´ng cÃ³
+`LLM_API_KEY`, pipeline váº«n cháº¡y báº±ng `heuristic_fallback` vÃ  frontend sáº½ cáº£nh bÃ¡o
+rÃµ Ä‘Ã¢y lÃ  káº¿t quáº£ dá»± phÃ²ng.
+
+Kiem tra backend:
 
 ```powershell
-uv pip install --python .\.venv\Scripts\python.exe -r requirements-cuda.txt
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 ```
 
-Kiểm tra runtime sau khi cài:
+Cá»­a sá»• PowerShell thá»© hai:
 
 ```powershell
-python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-```
-
-Baseline cần YOLO weights. Kiến trúc hackathon mới sẽ đưa YOLO ra khỏi luồng bắt buộc để ưu tiên tốc độ và độ ổn định.
-
-Frontend tĩnh:
-
-```powershell
-cd frontend
-npm install
+Set-Location frontend
+npm ci
 npm run dev
 ```
 
-## Chạy backend
+Má»Ÿ `http://localhost:3000`. Next.js chuyá»ƒn tiáº¿p `/api/v1/*` sang backend, vÃ¬ váº­y
+trÃ¬nh duyá»‡t khÃ´ng cáº§n cáº¥u hÃ¬nh URL API hoáº·c xá»­ lÃ½ CORS. Äá»ƒ dÃ¹ng backend khÃ¡c:
 
 ```powershell
-py -m backend --host 127.0.0.1 --port 8000 --reload
+$env:ANTIPAPER_BACKEND_URL="http://127.0.0.1:9000"
+npm run dev
 ```
 
-Hoặc dùng script Windows:
+`requirements.txt` á»Ÿ thÆ° má»¥c gá»‘c lÃ  mÃ´i trÆ°á»ng Ä‘áº§y Ä‘á»§ cho GPU NVIDIA, OCR vÃ 
+DeepEval; khÃ´ng cáº§n cÃ i gÃ³i náº·ng nÃ y chá»‰ Ä‘á»ƒ cháº¡y vertical slice web. LuÃ´n gá»i pip
+qua `python -m pip` sau khi kÃ­ch hoáº¡t `.venv` Ä‘á»ƒ trÃ¡nh cÃ i nháº§m vÃ o Python há»‡ thá»‘ng.
 
-```powershell
-.\scripts\run_backend.ps1
-```
-
-## Gói deploy backend
+## GÃ³i deploy backend
 
 ```powershell
 .\scripts\package_backend.ps1
 ```
 
-Bundle đầu ra mặc định nằm ở `.artifacts\antipaper-backend.zip`.
+Bundle Ä‘áº§u ra máº·c Ä‘á»‹nh náº±m á»Ÿ `.artifacts\antipaper-backend.zip`.
 
-## Chạy evaluation benchmark
+## Cháº¡y evaluation benchmark
 
-PR gate không gọi LLM judge và có thể chạy offline:
+PR gate khÃ´ng gá»i LLM judge vÃ  cÃ³ thá»ƒ cháº¡y offline:
 
 ```powershell
 python -m pytest
 python -m evals.run --suite smoke --output evidence/benchmark-smoke.json
 ```
 
-Release gate dùng pipeline thật và DeepEval 4.1.0. Cần cấu hình
-`DEMO_DOCUMENT_PATH`, `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_API_KEY` và
-`EVAL_JUDGE_MODEL`; judge mặc định là `gpt-5.4`, temperature 0.
+Release gate dÃ¹ng pipeline tháº­t vÃ  DeepEval 4.1.0. Cáº§n cáº¥u hÃ¬nh
+`DEMO_DOCUMENT_PATH`, `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_API_KEY` vÃ 
+`EVAL_JUDGE_MODEL`; judge máº·c Ä‘á»‹nh lÃ  `gpt-5.4`, temperature 0.
 
 ```powershell
-python -m pip install -r requirements-eval.txt
+python -m pip install -r requirements.txt
 python -m evals.run --suite full --output evidence/benchmark.json
-$env:PYTHONIOENCODING="utf-8" # cần cho Rich/DeepEval trên Windows
+$env:PYTHONIOENCODING="utf-8" # cáº§n cho Rich/DeepEval trÃªn Windows
 deepeval test run evals/tests
 ```
 
-Dataset release ở `evals/datasets/demo_v1.jsonl`. Bộ deterministic tái sử dụng
-`src/retrieval/golden.py`; không có evaluator golden thứ hai. Chế độ
-`heuristic_fallback` chỉ giữ khả dụng runtime và không được phép qua release
-gate. Thời gian judge không được tính vào latency của pipeline.
+Dataset release á»Ÿ `evals/datasets/demo_v1.jsonl`. Bá»™ deterministic tÃ¡i sá»­ dá»¥ng
+`backend/retrieval/golden.py`; khÃ´ng cÃ³ evaluator golden thá»© hai. Cháº¿ Ä‘á»™
+`heuristic_fallback` chá»‰ giá»¯ kháº£ dá»¥ng runtime vÃ  khÃ´ng Ä‘Æ°á»£c phÃ©p qua release
+gate. Thá»i gian judge khÃ´ng Ä‘Æ°á»£c tÃ­nh vÃ o latency cá»§a pipeline.
 
-## Logging an toàn
+## Logging an toÃ n
 
-- Backend chỉ log method, path, status, duration và content-length.
-- Không log toàn văn tài liệu upload.
-- Không log API key, token hoặc giá trị secret-like trong message.
+- Backend chá»‰ log method, path, status, duration vÃ  content-length.
+- KhÃ´ng log toÃ n vÄƒn tÃ i liá»‡u upload.
+- KhÃ´ng log API key, token hoáº·c giÃ¡ trá»‹ secret-like trong message.
 
-## Quy tắc làm việc 48 giờ
+## Quy táº¯c lÃ m viá»‡c 48 giá»
 
-- Chốt schema và API trước khi chia nhánh.
-- Mỗi nhiệm vụ có điều kiện hoàn thành và bằng chứng chạy được.
-- Merge theo lát cắt end-to-end; không chờ đến cuối mới tích hợp.
-- Sau giờ 32 chỉ sửa lỗi P0/P1 và hoàn thiện demo.
+- Chá»‘t schema vÃ  API trÆ°á»›c khi chia nhÃ¡nh.
+- Má»—i nhiá»‡m vá»¥ cÃ³ Ä‘iá»u kiá»‡n hoÃ n thÃ nh vÃ  báº±ng chá»©ng cháº¡y Ä‘Æ°á»£c.
+- Merge theo lÃ¡t cáº¯t end-to-end; khÃ´ng chá» Ä‘áº¿n cuá»‘i má»›i tÃ­ch há»£p.
+- Sau giá» 32 chá»‰ sá»­a lá»—i P0/P1 vÃ  hoÃ n thiá»‡n demo.

@@ -4,10 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
-except ModuleNotFoundError:  # Package import via ``src.retrieval``.
-    from src.intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
+from backend.intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
 
 
 def _normalize_text(value: str) -> str:

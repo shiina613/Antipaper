@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import re
 import time
 from tempfile import SpooledTemporaryFile
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
@@ -18,12 +19,17 @@ from .schemas import (
     QuestionRequest,
     QuestionResponse,
     StatusResponse,
+    DocumentStatus,
+    TaskHistoryItem,
+    TaskHistoryPage,
+    TaskType,
     UploadResponse,
 )
 from .service import AntipaperService
 from . import __version__
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+USER_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$"
 
 
 app = FastAPI(
@@ -48,6 +54,7 @@ logger = get_logger("http")
 
 @app.get("/")
 @app.get("/health")
+@app.get("/api/v1/health")
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
@@ -76,9 +83,16 @@ async def log_requests(request: Request, call_next) -> Response:
 @app.post("/api/v1/documents", response_model=UploadResponse, status_code=202)
 async def upload_document(
     request: Request,
+    user_id: str = Header(
+        default="demo-user",
+        alias="X-User-ID",
+        min_length=1,
+        max_length=128,
+        pattern=USER_ID_PATTERN,
+    ),
 ) -> UploadResponse:
     file_name, file_bytes = await _extract_upload(request)
-    return service.submit_document(file_name, file_bytes)
+    return service.submit_document(file_name, file_bytes, user_id=user_id)
 
 
 @app.get("/api/v1/documents/{document_id}/status", response_model=StatusResponse)
@@ -95,13 +109,61 @@ async def document_report(document_id: str) -> DocumentReport:
 def document_question(
     document_id: str,
     body: QuestionRequest,
+    user_id: str = Header(
+        default="demo-user",
+        alias="X-User-ID",
+        min_length=1,
+        max_length=128,
+        pattern=USER_ID_PATTERN,
+    ),
 ) -> QuestionResponse:
-    return service.answer_question(document_id, body.question)
+    return service.answer_question(document_id, body.question, user_id=user_id)
 
 
 @app.get("/api/v1/documents/{document_id}/pages/{page_number}", response_model=PageResponse)
 async def document_page(document_id: str, page_number: int) -> PageResponse:
     return service.get_page(document_id, page_number)
+
+
+@app.get("/api/v1/history", response_model=TaskHistoryPage)
+async def task_history(
+    user_id: str = Header(
+        default="demo-user",
+        alias="X-User-ID",
+        min_length=1,
+        max_length=128,
+        pattern=USER_ID_PATTERN,
+    ),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: DocumentStatus | None = Query(default=None),
+    task_type: TaskType | None = Query(default=None),
+    from_at: datetime | None = Query(default=None),
+    to_at: datetime | None = Query(default=None),
+) -> TaskHistoryPage:
+    return service.list_history(
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
+        status=status,
+        task_type=task_type,
+        from_at=from_at,
+        to_at=to_at,
+    )
+
+
+@app.get("/api/v1/history/{task_id}", response_model=TaskHistoryItem)
+async def task_history_detail(
+    task_id: str,
+    user_id: str = Header(
+        default="demo-user",
+        alias="X-User-ID",
+        min_length=1,
+        max_length=128,
+        pattern=USER_ID_PATTERN,
+    ),
+) -> TaskHistoryItem:
+    return service.get_history(user_id=user_id, task_id=task_id)
 
 
 async def _extract_upload(request: Request) -> tuple[str, bytes]:

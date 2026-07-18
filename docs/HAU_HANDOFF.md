@@ -1,16 +1,16 @@
-# Bàn giao HAU — Intelligence và YOLOv8 table detection
+﻿# BÃ n giao HAU â€” Intelligence vÃ  YOLOv8 table detection
 
 ## Context
 
-Lớp intelligence được tách khỏi ingestion và model client để các consumer có
-thể dùng fixture/test double trước khi tích hợp production. Theo quyết định kỹ
-thuật mới, toàn bộ PaddleOCR/PP-Structure đã được loại bỏ; pipeline chỉ dùng
-YOLOv8 hiện có để phát hiện và cắt vùng bảng.
+Lá»›p intelligence Ä‘Æ°á»£c tÃ¡ch khá»i ingestion vÃ  model client Ä‘á»ƒ cÃ¡c consumer cÃ³
+thá»ƒ dÃ¹ng fixture/test double trÆ°á»›c khi tÃ­ch há»£p production. Theo quyáº¿t Ä‘á»‹nh ká»¹
+thuáº­t má»›i, toÃ n bá»™ PaddleOCR/PP-Structure Ä‘Ã£ Ä‘Æ°á»£c loáº¡i bá»; pipeline chá»‰ dÃ¹ng
+YOLOv8 hiá»‡n cÃ³ Ä‘á»ƒ phÃ¡t hiá»‡n vÃ  cáº¯t vÃ¹ng báº£ng.
 
 ## Contract intelligence
 
 ```python
-from intelligence import IntelligenceReport, NormalizedDocument, build_intelligence
+from backend.intelligence import IntelligenceReport, NormalizedDocument, build_intelligence
 
 report = await build_intelligence(
     NormalizedDocument.model_validate(payload),
@@ -19,15 +19,15 @@ report = await build_intelligence(
 )
 ```
 
-- `call_llm(messages, response_model)` phải là client dùng chung và trả object
-  tương thích `response_model`.
-- Map chạy theo batch 7 trang mặc định; cấu hình chỉ cho phép 6–8 trang.
-- Output thiếu nguồn bị loại. Citation hợp lệ phải là `chunk_id` thuộc document;
-  validator ngoài chỉ có thể thu hẹp whitelist, không thể mở rộng.
-- `IntelligenceReport.model_json_schema()` là JSON schema cho structured output.
-- `stage_timings` ghi map/reduce/validation; `quality` ghi checklist định lượng.
+- `call_llm(messages, response_model)` pháº£i lÃ  client dÃ¹ng chung vÃ  tráº£ object
+  tÆ°Æ¡ng thÃ­ch `response_model`.
+- Map cháº¡y theo batch 7 trang máº·c Ä‘á»‹nh; cáº¥u hÃ¬nh chá»‰ cho phÃ©p 6â€“8 trang.
+- Output thiáº¿u nguá»“n bá»‹ loáº¡i. Citation há»£p lá»‡ pháº£i lÃ  `chunk_id` thuá»™c document;
+  validator ngoÃ i chá»‰ cÃ³ thá»ƒ thu háº¹p whitelist, khÃ´ng thá»ƒ má»Ÿ rá»™ng.
+- `IntelligenceReport.model_json_schema()` lÃ  JSON schema cho structured output.
+- `stage_timings` ghi map/reduce/validation; `quality` ghi checklist Ä‘á»‹nh lÆ°á»£ng.
 
-Fixture dùng chung:
+Fixture dÃ¹ng chung:
 
 - `docs/fixtures/normalized_document.mock.json`
 - `docs/fixtures/intelligence_report.mock.json`
@@ -35,7 +35,7 @@ Fixture dùng chung:
 ## Contract YOLOv8
 
 ```python
-from pipeline import TableDetector
+from backend.pipeline import TableDetector
 
 detector = TableDetector(
     "models/table_detect_yolov8.pt",
@@ -46,37 +46,37 @@ detections = detector.detect(page_image)
 crops = detector.crop_tables(page_image, [item.bbox for item in detections])
 ```
 
-Model đã xác nhận là checkpoint table-specific với hai lớp `bordered` và
-`borderless`. Model path là bắt buộc; thiếu checkpoint sẽ fail-closed thay vì
-tự tải weight COCO chung.
+Model Ä‘Ã£ xÃ¡c nháº­n lÃ  checkpoint table-specific vá»›i hai lá»›p `bordered` vÃ 
+`borderless`. Model path lÃ  báº¯t buá»™c; thiáº¿u checkpoint sáº½ fail-closed thay vÃ¬
+tá»± táº£i weight COCO chung.
 
-| Trường | Có từ YOLOv8 | Ý nghĩa |
+| TrÆ°á»ng | CÃ³ tá»« YOLOv8 | Ã nghÄ©a |
 |---|---:|---|
-| `bbox` | Có | Vùng bảng trong hệ tọa độ ảnh |
-| `confidence` | Có | Độ tin cậy detection |
-| `class_id` | Có | `bordered` hoặc `borderless` |
-| crop ảnh | Có | Ảnh con phục vụ consumer tiếp theo |
-| text tiếng Việt | Không | YOLO không nhận dạng ký tự |
-| row/column/cell | Không | YOLO không nhận dạng cấu trúc bảng |
-| Markdown/JSON nội dung | Không | Không được tạo placeholder hoặc suy diễn |
+| `bbox` | CÃ³ | VÃ¹ng báº£ng trong há»‡ tá»a Ä‘á»™ áº£nh |
+| `confidence` | CÃ³ | Äá»™ tin cáº­y detection |
+| `class_id` | CÃ³ | `bordered` hoáº·c `borderless` |
+| crop áº£nh | CÃ³ | áº¢nh con phá»¥c vá»¥ consumer tiáº¿p theo |
+| text tiáº¿ng Viá»‡t | KhÃ´ng | YOLO khÃ´ng nháº­n dáº¡ng kÃ½ tá»± |
+| row/column/cell | KhÃ´ng | YOLO khÃ´ng nháº­n dáº¡ng cáº¥u trÃºc báº£ng |
+| Markdown/JSON ná»™i dung | KhÃ´ng | KhÃ´ng Ä‘Æ°á»£c táº¡o placeholder hoáº·c suy diá»…n |
 
-`PdfProcessingPipeline` giữ nguyên native PDF text và chỉ đính kèm detection
-metadata. Pipeline không che vùng bảng rồi thay bằng nội dung rỗng, nhờ đó tránh
-mất text layer khi không có OCR thay thế.
+`PdfProcessingPipeline` giá»¯ nguyÃªn native PDF text vÃ  chá»‰ Ä‘Ã­nh kÃ¨m detection
+metadata. Pipeline khÃ´ng che vÃ¹ng báº£ng rá»“i thay báº±ng ná»™i dung rá»—ng, nhá» Ä‘Ã³ trÃ¡nh
+máº¥t text layer khi khÃ´ng cÃ³ OCR thay tháº¿.
 
 ## Reliability constraints
 
-- Không có model table-specific thì dừng với `YoloModelConfigurationError`.
-- Bounding box được clip vào kích thước ảnh; vùng rỗng bị loại.
-- Không còn export `ocr_page`, `ocr_table`, `PaddleOcrAdapter` hay
+- KhÃ´ng cÃ³ model table-specific thÃ¬ dá»«ng vá»›i `YoloModelConfigurationError`.
+- Bounding box Ä‘Æ°á»£c clip vÃ o kÃ­ch thÆ°á»›c áº£nh; vÃ¹ng rá»—ng bá»‹ loáº¡i.
+- KhÃ´ng cÃ²n export `ocr_page`, `ocr_table`, `PaddleOcrAdapter` hay
   `table_to_markdown` placeholder.
-- Map batch lỗi một phần vẫn reduce các batch hợp lệ; tất cả batch lỗi gây
+- Map batch lá»—i má»™t pháº§n váº«n reduce cÃ¡c batch há»£p lá»‡; táº¥t cáº£ batch lá»—i gÃ¢y
   `IntelligenceGenerationError`.
-- Không có chunk thì trả report rỗng và không gọi model.
+- KhÃ´ng cÃ³ chunk thÃ¬ tráº£ report rá»—ng vÃ  khÃ´ng gá»i model.
 
-## Giới hạn nghiệm thu HAU-05
+## Giá»›i háº¡n nghiá»‡m thu HAU-05
 
-HAU-05 theo mô tả gốc yêu cầu OCR tiếng Việt, đúng hàng/cột và Markdown/JSON.
-YOLOv8 thuần không thể đáp ứng các đầu ra này. Phần đạt được sau thay đổi phạm vi
-là detection/crop trên ảnh thật với `page`, `bbox`, `confidence` và class; phần
-OCR nội dung được đánh dấu không đạt thay vì tạo dữ liệu giả.
+HAU-05 theo mÃ´ táº£ gá»‘c yÃªu cáº§u OCR tiáº¿ng Viá»‡t, Ä‘Ãºng hÃ ng/cá»™t vÃ  Markdown/JSON.
+YOLOv8 thuáº§n khÃ´ng thá»ƒ Ä‘Ã¡p á»©ng cÃ¡c Ä‘áº§u ra nÃ y. Pháº§n Ä‘áº¡t Ä‘Æ°á»£c sau thay Ä‘á»•i pháº¡m vi
+lÃ  detection/crop trÃªn áº£nh tháº­t vá»›i `page`, `bbox`, `confidence` vÃ  class; pháº§n
+OCR ná»™i dung Ä‘Æ°á»£c Ä‘Ã¡nh dáº¥u khÃ´ng Ä‘áº¡t thay vÃ¬ táº¡o dá»¯ liá»‡u giáº£.

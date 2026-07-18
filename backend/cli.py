@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 import uvicorn
+from dotenv import load_dotenv
 
 from .logging import configure_logging
 
@@ -24,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    load_dotenv()
     args = build_parser().parse_args()
     configure_logging()
     uvicorn.run(
