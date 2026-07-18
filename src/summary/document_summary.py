@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from intelligence import DocumentChunk, NormalizedDocument
-from llm import LlmClient
+from backend.intelligence.contracts import DocumentChunk, NormalizedDocument
+from src.llm import LlmClient
 
 
 class SummaryItem(BaseModel):

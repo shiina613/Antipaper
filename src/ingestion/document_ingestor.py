@@ -10,9 +10,9 @@ from typing import Iterable
 
 import fitz
 
-from intelligence import Citation, DocumentChunk, NormalizedDocument
-from pipeline.processor import PdfProcessingPipeline, ProcessedDocument
-from pipeline.stitcher import StitchedPage
+from backend.intelligence.contracts import Citation, DocumentChunk, NormalizedDocument
+from backend.pipeline.processor import PdfProcessingPipeline, ProcessedDocument
+from backend.pipeline.stitcher import StitchedPage
 
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
