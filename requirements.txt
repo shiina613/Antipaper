@@ -13,12 +13,4 @@ huggingface_hub>=0.20.0
 pytest>=9.0.0
 httpx2>=2.7.0
 
-# Reproducible GPU OCR runtime validated on Windows/Python 3.12/CUDA 12.6.
-paddlepaddle-gpu @ https://paddle-whl.bj.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.3.1-cp312-cp312-win_amd64.whl ; platform_system == "Windows" and python_version == "3.12"
-nvidia-cudnn-cu12==9.9.0.52; platform_system == "Windows"
-paddleocr==3.4.1
-paddlex[ocr]==3.4.3
-# PaddleX imports ModelScope/Torch at startup. Newer resolver-selected Windows
-# wheels failed to load shm.dll on the validated machine.
-torch==2.7.1; platform_system == "Windows"
-torchvision==0.22.1; platform_system == "Windows"
+
