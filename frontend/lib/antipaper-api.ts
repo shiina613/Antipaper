@@ -1,6 +1,7 @@
 const API_BASE = "/api/v1";
 const MOCK_FALLBACK_ENABLED = process.env.NEXT_PUBLIC_ENABLE_MOCK_FALLBACK === "true";
 let lockedApiMode: ApiMode | null = null;
+const USER_ID_STORAGE_KEY = "antipaper.user-id";
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set([
   "application/pdf",
@@ -8,17 +9,20 @@ const SUPPORTED_TYPES = new Set([
 ]);
 
 export type DocumentStatus = "queued" | "processing" | "completed" | "failed";
+export type ApiMode = "api" | "mock";
+export type ApiResult<T> = T & { apiMode: ApiMode };
 export type ProcessingStage =
   | "queued"
+  | "parsing"
+  | "generating"
+  | "ready"
+  | "answering"
   | "extracting"
   | "detecting_tables"
   | "stitching"
   | "summarizing"
   | "completed"
   | "failed";
-export type ApiMode = "api" | "mock";
-export type ApiResult<T> = T & { apiMode: ApiMode };
-
 export type ApiErrorPayload = {
   error: {
     code: string;
@@ -31,10 +35,11 @@ export type UploadResponse = {
   document_id: string;
   status: DocumentStatus;
   cached: boolean;
+  task_id?: string;
 };
 
 export type StatusResponse = {
-  apiMode: ApiMode;
+  apiMode?: ApiMode;
   document_id: string;
   status: DocumentStatus;
   stage: ProcessingStage;
@@ -80,11 +85,17 @@ export type ReportResponse = {
   related_documents: Array<{
     title: string;
     document_number: string;
+    mentioned_name?: string | null;
     source: string;
     reason: string;
     citation_ids: string[];
+    url?: string | null;
+    publisher?: string | null;
+    excerpt?: string | null;
   }>;
   citations: Record<string, CitationMeta>;
+  generation_mode?: "llm" | "heuristic_fallback";
+  quality?: Record<string, unknown> | null;
 };
 
 export type QuestionResponse = {
@@ -92,6 +103,40 @@ export type QuestionResponse = {
   insufficient_evidence: boolean;
   citation_ids: string[];
   latency_ms: number;
+  task_id?: string;
+};
+
+export type TaskType = "document_processing" | "question_answer";
+
+export type TaskHistoryItem = {
+  task_id: string;
+  task_type: TaskType;
+  document_id: string | null;
+  display_name: string;
+  status: DocumentStatus;
+  stage: string;
+  progress: number;
+  cached: boolean;
+  created_at: string;
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  error: { code: string; message: string } | null;
+};
+
+export type TaskHistoryPage = {
+  items: TaskHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type HistoryFilters = {
+  limit?: number;
+  offset?: number;
+  status?: DocumentStatus | "";
+  taskType?: TaskType | "";
 };
 
 export type PageResponse = {
@@ -103,6 +148,14 @@ export type PageResponse = {
     text: string;
     page_number: number;
   }>;
+  source_preview?: {
+    kind: "page_image";
+    mime_type: string;
+    data_url: string;
+    width: number;
+    height: number;
+    page_number: number;
+  } | null;
 };
 
 export function lockDocumentApiMode(mode: ApiMode): void {
@@ -262,10 +315,14 @@ export function citationLabel(citation: CitationMeta): string {
 export function stageLabel(stage: ProcessingStage | string): string {
   const labels: Record<string, string> = {
     queued: "Đang xếp hàng",
+    parsing: "Đọc và chuẩn hóa tài liệu",
+    generating: "Tạo báo cáo có dẫn nguồn",
     extracting: "Trích xuất văn bản",
     detecting_tables: "Nhận diện bảng",
     stitching: "Ghép nội dung",
     summarizing: "Tạo tóm tắt",
+    answering: "Đang tìm bằng chứng",
+    ready: "Sẵn sàng",
     completed: "Hoàn tất",
     failed: "Thất bại",
   };
@@ -273,7 +330,9 @@ export function stageLabel(stage: ProcessingStage | string): string {
 }
 
 async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<ApiResult<T>> {
-  const response = await fetch(input, init);
+  const headers = new Headers(init?.headers);
+  headers.set("X-User-ID", getOrCreateUserId());
+  const response = await fetch(input, { ...init, headers });
 
   if (!response.ok) {
     let message = "Không thể kết nối backend.";
@@ -289,8 +348,17 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
   return { ...((await response.json()) as T), apiMode: "api" };
 }
 
-function withMock<T>(value: T): ApiResult<T> {
-  return { ...value, apiMode: "mock" };
+function getOrCreateUserId(): string {
+  if (typeof window === "undefined") return "demo-user";
+  try {
+    const existing = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+    if (existing) return existing;
+    const generated = `web-${window.crypto.randomUUID()}`;
+    window.localStorage.setItem(USER_ID_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return "demo-user";
+  }
 }
 
 export async function uploadDocument(file: File): Promise<ApiResult<UploadResponse>> {
@@ -310,6 +378,10 @@ export async function uploadDocument(file: File): Promise<ApiResult<UploadRespon
       cached: false,
     });
   }
+}
+
+function withMock<T>(value: T): ApiResult<T> {
+  return { ...value, apiMode: "mock" };
 }
 
 export async function getDocumentStatus(documentId: string): Promise<ApiResult<StatusResponse>> {
@@ -384,4 +456,14 @@ export async function getDocumentPage(documentId: string, pageNumber: number): P
         : [],
     });
   }
+}
+export function getTaskHistory(filters: HistoryFilters = {}): Promise<TaskHistoryPage> {
+  const params = new URLSearchParams({
+    limit: String(filters.limit ?? 20),
+    offset: String(filters.offset ?? 0),
+  });
+  if (filters.status) params.set("status", filters.status);
+  if (filters.taskType) params.set("task_type", filters.taskType);
+
+  return fetchJson<TaskHistoryPage>(`${API_BASE}/history?${params.toString()}`);
 }

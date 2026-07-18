@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
 
+const backendUrl = (process.env.BACKEND_URL ?? process.env.ANTIPAPER_BACKEND_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+
 const nextConfig: NextConfig = {
   async rewrites() {
-    const backendUrl = (process.env.BACKEND_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
     return [{ source: "/api/:path*", destination: `${backendUrl}/api/:path*` }];
   },
   images: {
