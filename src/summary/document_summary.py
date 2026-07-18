@@ -6,8 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from intelligence import DocumentChunk, NormalizedDocument
-from llm import LlmClient
+try:
+    from intelligence import DocumentChunk, NormalizedDocument
+    from llm import LlmClient
+except ModuleNotFoundError:
+    from src.intelligence import DocumentChunk, NormalizedDocument
+    from src.llm import LlmClient
 
 
 class SummaryItem(BaseModel):

@@ -583,7 +583,10 @@ class DocumentStore:
                         for page in record.pages
                     ],
                 )
-                from intelligence import NormalizedDocument
+                try:
+                    from intelligence import NormalizedDocument
+                except ModuleNotFoundError:
+                    from src.intelligence import NormalizedDocument
                 normalized_payload = json.loads(normalized_path.read_text(encoding="utf-8"))
                 if normalized_payload.get("document_sha256") != document_id or normalized_payload.get("schema_version") != 1:
                     return None

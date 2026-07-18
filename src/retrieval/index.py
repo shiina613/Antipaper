@@ -8,7 +8,10 @@ from types import MappingProxyType
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
-from intelligence.contracts import DocumentChunk, NormalizedDocument, coerce_normalized_document
+try:
+    from intelligence.contracts import DocumentChunk, NormalizedDocument, coerce_normalized_document
+except ModuleNotFoundError:
+    from src.intelligence.contracts import DocumentChunk, NormalizedDocument, coerce_normalized_document
 
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 STOPWORDS = {"là", "và", "của", "cho", "có", "được", "từ", "nào", "gì", "bao", "nhiêu", "ai", "những", "các", "một", "trong", "về", "khi", "này", "đó", "thế"}

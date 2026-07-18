@@ -12,7 +12,10 @@ from pathlib import Path
 import re
 from typing import Any, Iterable
 
-from intelligence.contracts import DocumentChunk, NormalizedDocument
+try:
+    from intelligence.contracts import DocumentChunk, NormalizedDocument
+except ModuleNotFoundError:
+    from src.intelligence.contracts import DocumentChunk, NormalizedDocument
 
 
 DEFAULT_CATALOG_PATH = (

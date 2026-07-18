@@ -4,7 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
+try:
+    from intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
+except ModuleNotFoundError:
+    from src.intelligence.contracts import Citation, NormalizedDocument, coerce_normalized_document
 
 
 def _normalize_text(value: str) -> str:

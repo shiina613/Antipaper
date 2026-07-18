@@ -10,9 +10,14 @@ from typing import Iterable
 
 import fitz
 
-from intelligence import Citation, DocumentChunk, NormalizedDocument
-from pipeline.processor import PdfProcessingPipeline, ProcessedDocument
-from pipeline.stitcher import StitchedPage
+try:
+    from intelligence import Citation, DocumentChunk, NormalizedDocument
+    from pipeline.processor import PdfProcessingPipeline, ProcessedDocument
+    from pipeline.stitcher import StitchedPage
+except ModuleNotFoundError:
+    from src.intelligence import Citation, DocumentChunk, NormalizedDocument
+    from src.pipeline.processor import PdfProcessingPipeline, ProcessedDocument
+    from src.pipeline.stitcher import StitchedPage
 
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
