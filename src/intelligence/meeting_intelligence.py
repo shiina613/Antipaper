@@ -68,6 +68,8 @@ class MeetingIntelligenceReport:
 class _Chunk:
     page_number: int
     text: str
+    normalized_text: str
+    word_count: int
 
 
 class MeetingIntelligenceEngine:
@@ -144,7 +146,7 @@ class MeetingIntelligenceEngine:
         document: ProcessedDocument,
         sample_question: str | None = None,
     ) -> MeetingIntelligenceReport:
-        chunks = self._build_chunks(document)
+        chunks = self._get_chunks(document)
         return MeetingIntelligenceReport(
             summary=self.summarize(chunks),
             terms=self.detect_terms(chunks, minimum=10),
@@ -183,13 +185,12 @@ class MeetingIntelligenceEngine:
         )
 
     def detect_terms(self, chunks: Sequence[_Chunk], minimum: int = 10) -> list[TermExplanation]:
-        full_text = "\n".join(chunk.text for chunk in chunks)
-        normalized_text = full_text.lower()
+        normalized_text = "\n".join(chunk.normalized_text for chunk in chunks)
         terms: list[TermExplanation] = []
 
         for term, explanation in self._TERM_DICTIONARY.items():
             if term in normalized_text:
-                matching_chunks = [chunk for chunk in chunks if term in chunk.text.lower()]
+                matching_chunks = [chunk for chunk in chunks if term in chunk.normalized_text]
                 pages = sorted({chunk.page_number for chunk in matching_chunks})
                 evidence = self._shorten(matching_chunks[0].text if matching_chunks else term)
                 terms.append(
@@ -249,7 +250,7 @@ class MeetingIntelligenceEngine:
         knowledge. If no evidence is retrieved, it explicitly says so.
         """
 
-        chunks = self._build_chunks(document)
+        chunks = self._get_chunks(document)
         question_terms = self._extract_question_terms(question)
         if not question_terms:
             return GroundedAnswer(
@@ -308,7 +309,31 @@ class MeetingIntelligenceEngine:
         chunks: list[_Chunk] = []
         for page in document.stitched_pages:
             for paragraph in self._split_paragraphs(page.content):
-                chunks.append(_Chunk(page_number=page.page_number, text=paragraph))
+                chunks.append(
+                    _Chunk(
+                        page_number=page.page_number,
+                        text=paragraph,
+                        normalized_text=paragraph.lower(),
+                        word_count=len(paragraph.split()),
+                    )
+                )
+        return chunks
+
+    def extract_chunks(self, document: ProcessedDocument) -> list[_Chunk]:
+        """Expose the chunk builder so orchestration can cache once."""
+
+        return self._build_chunks(document)
+
+    def _get_chunks(self, document: ProcessedDocument) -> list[_Chunk]:
+        cached_chunks = getattr(document, "chunks", None)
+        if cached_chunks:
+            return cached_chunks
+
+        chunks = self._build_chunks(document)
+        try:
+            document.chunks = chunks
+        except Exception:  # pragma: no cover - document may be immutable in tests
+            pass
         return chunks
 
     def _rank_sentences(self, chunks: Sequence[_Chunk]) -> list[str]:
@@ -324,8 +349,8 @@ class MeetingIntelligenceEngine:
         return sorted(
             chunks,
             key=lambda chunk: (
-                sum(keyword in chunk.text.lower() for keyword in self._IMPORTANT_KEYWORDS),
-                len(chunk.text),
+                sum(keyword in chunk.normalized_text for keyword in self._IMPORTANT_KEYWORDS),
+                chunk.word_count,
             ),
             reverse=True,
         )
@@ -342,7 +367,7 @@ class MeetingIntelligenceEngine:
         }
         scored: list[tuple[int, _Chunk]] = []
         for chunk in chunks:
-            chunk_text = chunk.text.lower()
+            chunk_text = chunk.normalized_text
             score = sum(1 for term in question_terms if term in chunk_text)
             score += sum(1 for keyword in self._IMPORTANT_KEYWORDS if keyword in chunk_text)
             scored.append((score, chunk))
@@ -363,7 +388,7 @@ class MeetingIntelligenceEngine:
     ) -> list[tuple[int, _Chunk]]:
         scored: list[tuple[int, _Chunk]] = []
         for chunk in chunks:
-            chunk_text = chunk.text.lower()
+            chunk_text = chunk.normalized_text
             score = sum(1 for term in question_terms if term in chunk_text)
             scored.append((score, chunk))
         return sorted(scored, key=lambda item: (item[0], len(item[1].text)), reverse=True)
