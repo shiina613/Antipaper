@@ -44,6 +44,8 @@ class OpenAICompatibleLLMClient:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
+        if self.base_url.endswith("/chat/completions"):
+            self.base_url = self.base_url[: -len("/chat/completions")]
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
 

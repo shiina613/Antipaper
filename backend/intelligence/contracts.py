@@ -23,8 +23,10 @@ class Citation(ContractModel):
 
     page: int = Field(ge=1)
     chapter: str | None = None
+    section: str | None = None
     article: str | None = None
     clause: str | None = None
+    point: str | None = None
     excerpt: str = Field(min_length=1)
 
 
@@ -35,8 +37,10 @@ class DocumentChunk(ContractModel):
     page: int = Field(ge=1)
     text: str = Field(min_length=1)
     chapter: str | None = None
+    section: str | None = None
     article: str | None = None
     clause: str | None = None
+    point: str | None = None
 
 
 class NormalizedDocument(ContractModel):

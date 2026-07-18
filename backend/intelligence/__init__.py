@@ -19,6 +19,7 @@ from .contracts import (
     SuggestedQuestion,
     TermExplanation,
 )
+from .local_pack import LocalIntelligencePack, build_local_intelligence_pack, detect_terms, suggest_questions
 from .meeting_intelligence import (
     GroundedAnswer,
     MeetingIntelligenceEngine,
@@ -39,6 +40,7 @@ __all__ = [
     "IntelligenceGenerationError",
     "IntelligenceReport",
     "IntelligenceSummary",
+    "LocalIntelligencePack",
     "MeetingIntelligenceEngine",
     "MeetingIntelligenceReport",
     "MeetingSummary",
@@ -50,4 +52,7 @@ __all__ = [
     "SuggestedQuestion",
     "TermExplanation",
     "build_intelligence",
+    "build_local_intelligence_pack",
+    "detect_terms",
+    "suggest_questions",
 ]

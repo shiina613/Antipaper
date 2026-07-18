@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -58,9 +59,11 @@ def test_backend_persists_normalized_document_and_uses_retrieval(
     report = service.get_report(upload.document_id)
     assert report.generation_mode == "heuristic_fallback"
 
-    response = service.answer_question(
-        upload.document_id,
-        "Mục đích xem xét hệ thống quản lý chất lượng là gì?",
+    response = asyncio.run(
+        service.answer_question(
+            upload.document_id,
+            "Mục đích xem xét hệ thống quản lý chất lượng là gì?",
+        )
     )
     record = service.store.get(upload.document_id)
     assert record.normalized_document is not None

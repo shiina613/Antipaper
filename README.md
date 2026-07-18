@@ -69,11 +69,30 @@ Backend Ä‘á»c `.env` khi khá»Ÿi Ä‘á»™ng vÃ  phá»¥c vá»¥
 `LLM_API_KEY`, pipeline váº«n cháº¡y báº±ng `heuristic_fallback` vÃ  frontend sáº½ cáº£nh bÃ¡o
 rÃµ Ä‘Ã¢y lÃ  káº¿t quáº£ dá»± phÃ²ng.
 
-Kiem tra backend:
+Kiểm tra backend:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+```
+
+Trên Linux dùng file requirements riêng để tránh wheel Windows/CUDA. `app.py`
+được giữ như giao diện Streamlit tham chiếu, trong khi giao diện sản phẩm chính
+vẫn là Next.js trong thư mục `frontend`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-linux.txt
+python download_yolo_table_weights.py
+streamlit run app.py
+```
+
+Nếu dùng Ubuntu/Debian và cần `pdf2image`, cài thêm Poppler:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y poppler-utils
 ```
 
 Cá»­a sá»• PowerShell thá»© hai:

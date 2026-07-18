@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -134,10 +135,12 @@ def test_question_answer_is_recorded_as_its_own_task(tmp_path) -> None:
     )
     service.get_report(upload.document_id)
 
-    answer = service.answer_question(
-        upload.document_id,
-        "Tài liệu này nói về nội dung gì?",
-        user_id="user-1",
+    answer = asyncio.run(
+        service.answer_question(
+            upload.document_id,
+            "Tài liệu này nói về nội dung gì?",
+            user_id="user-1",
+        )
     )
     assert answer.task_id is not None
 

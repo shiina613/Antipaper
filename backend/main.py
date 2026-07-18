@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 import re
 import time
+from contextlib import asynccontextmanager
 from tempfile import SpooledTemporaryFile
 
 from fastapi import FastAPI, Header, Query, Request
+from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
@@ -28,14 +30,23 @@ from .schemas import (
 from .service import AntipaperService
 from . import __version__
 
+load_dotenv()
+
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 USER_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    service.shutdown()
 
 
 app = FastAPI(
     title="Antipaper API",
     version=__version__,
     description="Backend skeleton for document upload, status, report, pages, and Q&A.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -46,10 +57,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-register_error_handlers(app)
-service = AntipaperService()
 configure_logging()
 logger = get_logger("http")
+register_error_handlers(app)
+service = AntipaperService()
+if service.llm_status == "disabled":
+    logger.warning("LLM RAG is disabled; using grounded extractive fallback.")
 
 
 @app.get("/")
@@ -60,6 +73,7 @@ async def health() -> dict[str, str]:
         "status": "ok",
         "service": "antipaper-backend",
         "version": __version__,
+        "llm_status": service.llm_status,
     }
 
 
@@ -106,7 +120,7 @@ async def document_report(document_id: str) -> DocumentReport:
 
 
 @app.post("/api/v1/documents/{document_id}/questions", response_model=QuestionResponse)
-def document_question(
+async def document_question(
     document_id: str,
     body: QuestionRequest,
     user_id: str = Header(
@@ -117,7 +131,7 @@ def document_question(
         pattern=USER_ID_PATTERN,
     ),
 ) -> QuestionResponse:
-    return service.answer_question(document_id, body.question, user_id=user_id)
+    return await service.answer_question(document_id, body.question, user_id=user_id)
 
 
 @app.get("/api/v1/documents/{document_id}/pages/{page_number}", response_model=PageResponse)

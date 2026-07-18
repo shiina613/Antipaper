@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
@@ -17,7 +18,8 @@ from typing import Callable
 import fitz
 
 from .intelligence import NormalizedDocument
-from .retrieval import RetrievalIndex
+from .retrieval import RetrievalIndex, build_index, build_index_async
+from src.llm import LlmClient, LlmSettings, shared_limiter
 
 from .errors import ApiError
 from .history import TaskHistoryStore
@@ -42,14 +44,13 @@ from .schemas import (
     UploadResponse,
 )
 
-
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 PROCESSING_WAIT_TIMEOUT_SECONDS = 15.0
 # Questions now retain their complete, question-specific evidence provenance.
 # Bumping the schema prevents cached reports with the earlier single-paragraph
 # summaries from rehydrating after a backend restart.
-ARTIFACT_SCHEMA_VERSION = 9
+ARTIFACT_SCHEMA_VERSION = 11
 STAGE_QUEUED = "queued"
 STAGE_PARSING = "parsing"
 STAGE_GENERATING = "generating"
@@ -62,6 +63,26 @@ FAILED_ERROR_STATUSES = {
     "MODEL_TIMEOUT": 504,
     "PROCESSING_FAILED": 409,
 }
+
+
+def _configured_llm_client() -> object | None:
+    """Create one shared client only when an API key is configured."""
+    if not (os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("LLM_API_KEY", "").strip()):
+        return None
+    try:
+        return LlmClient(settings=LlmSettings.from_env())
+    except Exception:
+        return None
+
+
+def _configured_embedding_client() -> object | None:
+    if not (os.getenv("OPENAI_API_KEY", "").strip() or os.getenv("LLM_API_KEY", "").strip()):
+        return None
+    try:
+        settings = LlmSettings.from_env()
+        return LlmClient(settings=settings, limiter=shared_limiter(settings.max_concurrency))
+    except Exception:
+        return None
 
 
 @dataclass
@@ -94,6 +115,9 @@ class DocumentRecord:
     retrieval_index: RetrievalIndex | None = field(default=None, repr=False, compare=False)
     last_question_trace: QuestionTrace | None = field(default=None, repr=False, compare=False)
     future: Future[None] | None = field(default=None, repr=False, compare=False)
+    semantic_rebuild_future: Future[None] | None = field(default=None, repr=False, compare=False)
+    semantic_rebuild_needed: bool = field(default=False, repr=False, compare=False)
+    semantic_rebuild_scheduled: bool = field(default=False, repr=False, compare=False)
 
 
 class DocumentStore:
@@ -103,12 +127,26 @@ class DocumentStore:
         self,
         artifact_root: Path | None = None,
         transition_listener: Callable[[DocumentRecord], None] | None = None,
+        llm_client: object | None = None,
+        embedding_client: object | None = None,
+        embedding_client_factory=None,
+        embedding_settings=None,
     ) -> None:
         self._lock = threading.RLock()
         self._documents: dict[str, DocumentRecord] = {}
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="antipaper-job")
-        self._orchestrator = DocumentOrchestrator()
+        self._orchestrator = DocumentOrchestrator(llm_client=llm_client)
         self._transition_listener = transition_listener
+        self.llm_enabled = llm_client is not None
+        self._query_llm_client = llm_client
+        self._embedding_worker_refs: list[object] = []
+        self._embedding_settings = embedding_settings or getattr(embedding_client, "settings", None)
+        if embedding_client_factory is not None:
+            self._embedding_client_factory = embedding_client_factory
+        elif embedding_client is not None and hasattr(embedding_client, "new_loop_local_embedding_client"):
+            self._embedding_client_factory = embedding_client.new_loop_local_embedding_client
+        else:
+            self._embedding_client_factory = None
         root = artifact_root or Path(os.getenv("ARTIFACT_DIR", ".artifacts"))
         self._artifact_root = (root.expanduser() / "documents").resolve()
         self._artifact_root.mkdir(parents=True, exist_ok=True)
@@ -144,6 +182,8 @@ class DocumentStore:
                 rehydrated.cached = True
                 rehydrated.updated_at = datetime.now(timezone.utc)
                 self._documents[document_id] = rehydrated
+                if rehydrated.semantic_rebuild_needed:
+                    self._schedule_rebuild(rehydrated)
                 return rehydrated, True
 
             record = DocumentRecord(
@@ -178,6 +218,8 @@ class DocumentStore:
             rehydrated = self._rehydrate_from_artifacts(document_id)
             if rehydrated is not None:
                 self._documents[document_id] = rehydrated
+                if rehydrated.semantic_rebuild_needed:
+                    self._schedule_rebuild(rehydrated)
                 return rehydrated
 
             raise ApiError(
@@ -206,9 +248,16 @@ class DocumentStore:
             record.processed_document = result.processed_document
             record.processed_document.processing_seconds = processing_seconds
             record.normalized_document = result.normalized_document
-            record.retrieval_index = self._orchestrator.build_retrieval_index(
-                result.normalized_document
-            )
+            record.processed_document.normalized_document = result.normalized_document
+            record.retrieval_index = build_index(result.normalized_document)
+            if self._embedding_client_factory is not None:
+                try:
+                    record.retrieval_index = asyncio.run(
+                        self._build_semantic_index(result.normalized_document)
+                    )
+                except Exception:
+                    # Lexical retrieval remains authoritative when embeddings fail.
+                    record.semantic_rebuild_needed = False
             record.pages = self._build_pages(result.processed_document)
             record.page_count = result.processed_document.page_count
             record.report = result.report.model_copy(update={"processing_seconds": processing_seconds})
@@ -221,6 +270,8 @@ class DocumentStore:
             record.updated_at = datetime.now(timezone.utc)
             self._persist_artifacts(record)
             self._notify_transition(record)
+            if record.semantic_rebuild_needed:
+                self._schedule_rebuild(record)
         except ApiError as exc:
             self._mark_failed(record, exc.code, exc.message)
             raise
@@ -297,9 +348,9 @@ class DocumentStore:
             source_preview=self._render_source_preview(record, page_number),
         )
 
-    def answer_question(self, document_id: str, question: str) -> QuestionResponse:
-        record = self.ensure_processed(document_id)
-        if record.normalized_document is None:
+    async def answer_question(self, document_id: str, question: str) -> QuestionResponse:
+        record = await asyncio.to_thread(self.ensure_processed, document_id)
+        if record.processed_document is None:
             if record.status == "failed" and record.error:
                 raise self._api_error_from_record_error(record.error)
             raise ApiError(
@@ -309,14 +360,79 @@ class DocumentStore:
                 retryable=True,
             )
         start = time.perf_counter()
-        if record.retrieval_index is None:
-            record.retrieval_index = self._orchestrator.build_retrieval_index(
-                record.normalized_document
-            )
-        trace = self._orchestrator.answer_question(record.retrieval_index, question)
+        index = record.retrieval_index
+        if index is None and record.processed_document.normalized_document is not None:
+            index = build_index(record.processed_document.normalized_document)
+            record.retrieval_index = index
+        trace = await self._orchestrator.answer_question_async(
+            record.processed_document,
+            question,
+            retrieval_index=index,
+            query_embedder=getattr(self._query_llm_client, "embed", None) if index is not None and getattr(index, "_vectors", None) else None,
+        )
         record.last_question_trace = trace
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         return trace.response.model_copy(update={"latency_ms": latency_ms})
+
+    async def _build_semantic_index(self, normalized):
+        worker_client = self._embedding_client_factory() if self._embedding_client_factory is not None else None
+        if worker_client is not None:
+            # Keep a small bounded set alive so loop-local clients cannot be
+            # accidentally mistaken for a reused client when object IDs recycle.
+            self._embedding_worker_refs.append(worker_client)
+            del self._embedding_worker_refs[:-8]
+        embed = getattr(worker_client, "embed", None)
+        settings = getattr(worker_client, "settings", None) or self._embedding_settings
+        if embed is None or settings is None or not getattr(settings, "embedding_model", ""):
+            raise RuntimeError("embedding client unavailable")
+        self._embedding_settings = settings
+        batch_size = getattr(getattr(worker_client, "settings", None), "embedding_max_batch_size", 64)
+        candidate = await build_index_async(normalized, embed, batch_size=batch_size)
+        expected = self._expected_embedding_dimension(worker_client)
+        if expected is not None and any(len(vector) != expected for vector in candidate._vectors.values()):
+            raise ValueError("embedding dimension mismatch")
+        return candidate
+
+    def _expected_embedding_dimension(self, client=None) -> int | None:
+        settings = getattr(client, "settings", None) or self._embedding_settings
+        configured = getattr(settings, "embedding_dimensions", None)
+        if configured is not None:
+            return configured
+        if getattr(settings, "embedding_model", None) == "text-embedding-3-small":
+            return 1536
+        return None
+
+    def _schedule_rebuild(self, record: DocumentRecord) -> None:
+        with self._lock:
+            if self._embedding_client_factory is None or record.semantic_rebuild_future is not None or record.semantic_rebuild_scheduled:
+                return
+            record.semantic_rebuild_scheduled = True
+            record.semantic_rebuild_future = self._executor.submit(self._rebuild_semantic, record.document_id)
+
+    def _rebuild_semantic(self, document_id: str) -> None:
+        record = self.get(document_id)
+        normalized = record.processed_document.normalized_document if record.processed_document else None
+        try:
+            if normalized is None:
+                return
+            candidate = asyncio.run(self._build_semantic_index(normalized))
+            with self._lock:
+                if self._documents.get(document_id) is record:
+                    record.retrieval_index = candidate
+                    record.semantic_rebuild_needed = False
+                    self._persist_semantic_artifact(record)
+        except Exception:
+            with self._lock:
+                if self._documents.get(document_id) is record:
+                    record.semantic_rebuild_needed = False
+            return
+        finally:
+            with self._lock:
+                if self._documents.get(document_id) is record:
+                    record.semantic_rebuild_future = None
+
+    def shutdown(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _start_processing(self, record: DocumentRecord) -> None:
         record.status = "queued"
@@ -436,6 +552,9 @@ class DocumentStore:
     def _normalized_path(self, document_id: str) -> Path:
         return self._artifact_dir(document_id) / "normalized.json"
 
+    def _semantic_path(self, document_id: str) -> Path:
+        return self._artifact_dir(document_id) / "semantic_index.v1.json"
+
     def _source_path(self, document_id: str) -> Path:
         return self._artifact_dir(document_id) / "source.bin"
 
@@ -473,11 +592,9 @@ class DocumentStore:
                 json.dumps(self._serialize_manifest(record), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            if (
-                record.status == "completed"
-                and record.report is not None
-                and record.normalized_document is not None
-            ):
+            if record.status == "completed" and record.processed_document is not None and record.processed_document.normalized_document is not None:
+                self._persist_normalized_artifact(record)
+            if record.status == "completed" and record.report is not None:
                 self._pages_path(record.document_id).write_text(
                     json.dumps(self._serialize_pages(record.pages), ensure_ascii=False, indent=2),
                     encoding="utf-8",
@@ -486,12 +603,45 @@ class DocumentStore:
                     record.report.model_dump_json(indent=2),
                     encoding="utf-8",
                 )
-                self._normalized_path(record.document_id).write_text(
-                    record.normalized_document.model_dump_json(indent=2),
-                    encoding="utf-8",
-                )
+                self._persist_semantic_artifact(record)
         except Exception:  # pragma: no cover - artifact persistence is best effort
             return
+
+    def _persist_normalized_artifact(self, record: DocumentRecord) -> None:
+        normalized = record.processed_document.normalized_document
+        payload = {
+            "schema_version": 1,
+            "document_sha256": record.document_id,
+            "normalized_document": normalized.model_dump(mode="json"),
+        }
+        path = self._normalized_path(record.document_id)
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        temp.replace(path)
+
+    def _persist_semantic_artifact(self, record: DocumentRecord) -> None:
+        index = record.retrieval_index
+        normalized = record.processed_document.normalized_document if record.processed_document else None
+        if index is None or not getattr(index, "_vectors", None) or normalized is None:
+            return
+        vectors = {chunk_id: list(vector) for chunk_id, vector in index._vectors.items()}
+        payload = {
+            "schema_version": 1,
+            "preprocessing_version": "retrieval-v1",
+            "document_sha256": record.document_id,
+            "document_id": normalized.document_id,
+            "file_name": normalized.file_name,
+            "model": getattr(self._embedding_settings, "embedding_model", None),
+            "dimension": len(next(iter(vectors.values()))) if vectors else 0,
+            "chunk_ids": [chunk.chunk_id for chunk in normalized.chunks],
+            "text_hashes": {chunk.chunk_id: hashlib.sha256(chunk.text.encode("utf-8")).hexdigest() for chunk in normalized.chunks},
+            "normalized_document": normalized.model_dump(mode="json"),
+            "vectors": vectors,
+        }
+        path = self._semantic_path(record.document_id)
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        temp.replace(path)
 
     def _rehydrate_from_artifacts(self, document_id: str) -> DocumentRecord | None:
         manifest_path = self._manifest_path(document_id)
@@ -522,21 +672,21 @@ class DocumentStore:
                 cached=bool(manifest.get("cached", False)),
                 page_count=int(manifest.get("page_count", 0)),
             )
+            manifest_hash = manifest.get("file_sha256", document_id)
+            if manifest_hash != document_id:
+                return None
             if record.status == "completed":
-                if (
-                    not report_path.exists()
-                    or not pages_path.exists()
-                    or not normalized_path.exists()
-                ):
+                if not report_path.exists() or not pages_path.exists() or not normalized_path.exists():
                     return None
                 record.report = DocumentReport.model_validate_json(report_path.read_text(encoding="utf-8"))
                 record.pages = self._deserialize_pages(json.loads(pages_path.read_text(encoding="utf-8")))
-                record.normalized_document = NormalizedDocument.model_validate_json(
-                    normalized_path.read_text(encoding="utf-8")
+                normalized_payload = json.loads(normalized_path.read_text(encoding="utf-8"))
+                if normalized_payload.get("document_sha256") != document_id or normalized_payload.get("schema_version") != 1:
+                    return None
+                normalized = NormalizedDocument.model_validate(
+                    normalized_payload["normalized_document"]
                 )
-                record.retrieval_index = self._orchestrator.build_retrieval_index(
-                    record.normalized_document
-                )
+                record.normalized_document = normalized
                 record.processed_document = ProcessedDocument(
                     source_name=record.file_name,
                     page_count=record.page_count,
@@ -544,7 +694,40 @@ class DocumentStore:
                         StitchedPage(page_number=page.page_number, content=page.text)
                         for page in record.pages
                     ],
+                    normalized_document=normalized,
                 )
+                record.retrieval_index = build_index(normalized)
+                semantic_path = self._semantic_path(document_id)
+                semantic_valid = False
+                if semantic_path.exists():
+                    try:
+                        semantic = json.loads(semantic_path.read_text(encoding="utf-8"))
+                        if semantic.get("schema_version") != 1 or semantic.get("preprocessing_version") != "retrieval-v1":
+                            raise ValueError("semantic schema mismatch")
+                        normalized = NormalizedDocument.model_validate(semantic["normalized_document"])
+                        if semantic.get("document_sha256") != document_id:
+                            raise ValueError("semantic record hash mismatch")
+                        if semantic["document_id"] != normalized.document_id or semantic["file_name"] != normalized.file_name:
+                            raise ValueError("semantic document identity mismatch")
+                        if normalized.model_dump(mode="json") != record.processed_document.normalized_document.model_dump(mode="json"):
+                            raise ValueError("semantic canonical normalized document mismatch")
+                        expected_model = getattr(self._embedding_settings, "embedding_model", None)
+                        if expected_model is not None and semantic.get("model") != expected_model:
+                            raise ValueError("semantic model mismatch")
+                        expected_dimension = self._expected_embedding_dimension()
+                        if expected_dimension is not None and semantic.get("dimension") != expected_dimension:
+                            raise ValueError("semantic dimension mismatch")
+                        hashes = {chunk.chunk_id: hashlib.sha256(chunk.text.encode("utf-8")).hexdigest() for chunk in normalized.chunks}
+                        if semantic["chunk_ids"] != [chunk.chunk_id for chunk in normalized.chunks] or semantic["text_hashes"] != hashes:
+                            raise ValueError("semantic text identity mismatch")
+                        if semantic["dimension"] != len(next(iter(semantic["vectors"].values()))):
+                            raise ValueError("semantic dimension mismatch")
+                        record.retrieval_index = build_index(normalized, vectors=semantic["vectors"])
+                        semantic_valid = True
+                    except Exception:
+                        semantic_valid = False
+                if not semantic_valid:
+                    record.semantic_rebuild_needed = self._embedding_client_factory is not None
             return record
         except Exception:  # pragma: no cover - corrupted artifacts are treated as cache miss
             return None
@@ -553,6 +736,7 @@ class DocumentStore:
         return {
             "document_id": record.document_id,
             "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+            "file_sha256": record.document_id,
             "file_name": record.file_name,
             "file_size_bytes": record.file_size_bytes,
             "status": record.status,
@@ -614,14 +798,35 @@ class DocumentStore:
 class AntipaperService:
     """Facade used by the FastAPI routes."""
 
-    def __init__(self, artifact_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        artifact_root: Path | None = None,
+        llm_client: object | None = None,
+        embedding_client: object | None = None,
+        embedding_client_factory=None,
+        embedding_settings=None,
+    ) -> None:
         root = (artifact_root or Path(os.getenv("ARTIFACT_DIR", ".artifacts"))).expanduser()
         root = root.resolve()
+        configured = llm_client if llm_client is not None else _configured_llm_client()
+        configured_embedding = (
+            embedding_client
+            if embedding_client is not None
+            else None if embedding_client_factory is not None else _configured_embedding_client()
+        )
         self.history = TaskHistoryStore(root / "history.sqlite3")
         self.store = DocumentStore(
             artifact_root=root,
             transition_listener=self._record_document_transition,
+            llm_client=configured,
+            embedding_client=configured_embedding,
+            embedding_client_factory=embedding_client_factory,
+            embedding_settings=embedding_settings,
         )
+
+    @property
+    def llm_status(self) -> str:
+        return "configured" if self.store.llm_enabled else "disabled"
 
     def submit_document(
         self,
@@ -701,7 +906,7 @@ class AntipaperService:
     def get_page(self, document_id: str, page_number: int) -> PageResponse:
         return self.store.get_page(document_id, page_number)
 
-    def answer_question(
+    async def answer_question(
         self,
         document_id: str,
         question: str,
@@ -718,7 +923,7 @@ class AntipaperService:
             progress=50,
         )
         try:
-            response = self.store.answer_question(document_id, question)
+            response = await self.store.answer_question(document_id, question)
         except ApiError as exc:
             self.history.update_task(
                 task.task_id,
@@ -787,3 +992,6 @@ class AntipaperService:
             error_message=error_message,
             duration_seconds=duration,
         )
+
+    def shutdown(self) -> None:
+        self.store.shutdown()
