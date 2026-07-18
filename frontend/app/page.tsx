@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleHelp,
   Clock3,
+  ExternalLink,
   FileText,
   FileUp,
   LoaderCircle,
@@ -27,10 +28,14 @@ import {
   type ProcessingStage,
   type ReportResponse,
   type StatusResponse,
+  citationLabel,
   getDocumentReport,
+  getDocumentPage,
   getDocumentStatus,
   mockReport,
   stageLabel,
+  type CitationMeta,
+  type PageResponse,
   uploadDocument,
   validateDocumentFile,
 } from "@/lib/antipaper-api";
@@ -68,6 +73,10 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeReport = report ?? mockReport;
+  const [selectedCitationId, setSelectedCitationId] = useState<string>("P14-D2");
+  const [selectedPage, setSelectedPage] = useState<PageResponse | null>(null);
+  const [isCitationLoading, setIsCitationLoading] = useState(false);
+  const selectedCitation = activeReport.citations[selectedCitationId] ?? null;
 
   const activeTitle = useMemo(() => {
     if (view === "upload") return "Tải tài liệu họp";
@@ -124,6 +133,18 @@ export default function Home() {
     setIsUploading(false);
     setIsPolling(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleSelectCitation(citationId: string) {
+    const citation = activeReport.citations[citationId];
+    if (!citation) return;
+
+    setSelectedCitationId(citationId);
+    setIsCitationLoading(true);
+    const page = await getDocumentPage(activeReport.document_id, citation.page);
+    setApiMode(page.apiMode);
+    setSelectedPage(page);
+    setIsCitationLoading(false);
   }
 
   useEffect(() => {
@@ -189,12 +210,29 @@ export default function Home() {
             {view === "processing" && (
               <ProcessingWorkspace status={status} apiMode={apiMode} onRetry={resetUpload} />
             )}
-            {view === "report" && <PlaceholderPanel title="Report workspace" />}
+            {view === "report" && (
+              <ReportWorkspace report={activeReport} onSelectCitation={handleSelectCitation} />
+            )}
             {view === "qa" && <PlaceholderPanel title="Q&A workspace" />}
+            <div className="mt-6 lg:hidden">
+              <CitationViewer
+                report={activeReport}
+                citationId={selectedCitationId}
+                citation={selectedCitation}
+                page={selectedPage}
+                isLoading={isCitationLoading}
+              />
+            </div>
           </div>
         </section>
         <aside className="hidden min-h-screen bg-[#fafaf7] lg:block">
-          <PlaceholderPanel title="Citation viewer" />
+          <CitationViewer
+            report={activeReport}
+            citationId={selectedCitationId}
+            citation={selectedCitation}
+            page={selectedPage}
+            isLoading={isCitationLoading}
+          />
         </aside>
       </div>
     </main>
@@ -422,6 +460,170 @@ function stepProgress(stage: ProcessingStage) {
     failed: 100,
   };
   return progress[stage];
+}
+
+function ReportWorkspace({
+  report,
+  onSelectCitation,
+}: {
+  report: ReportResponse;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  const sections = [
+    ["Bối cảnh", report.summary.context],
+    ["Nội dung chính", report.summary.main_content],
+    ["Điểm cần quyết định", report.summary.decision_points],
+    ["Tác động", report.summary.impact],
+  ] as const;
+
+  return (
+    <div className="space-y-6">
+      <section className="grid gap-4 xl:grid-cols-2">
+        {sections.map(([title, items]) => (
+          <div key={title} className="rounded-lg border border-[#c4c7c7] bg-white p-5">
+            <h3 className="font-medium">{title}</h3>
+            <div className="mt-4 space-y-4">
+              {items.map((item) => (
+                <CitedParagraph key={item.text} item={item} report={report} onSelectCitation={onSelectCitation} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </section>
+      <section className="rounded-lg border border-[#c4c7c7] bg-white p-5">
+        <h3 className="font-medium">Thuật ngữ</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {report.terms.map((term) => (
+            <div key={term.term} className="rounded-lg border border-[#c4c7c7]/70 p-4">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge>{term.term}</Badge>
+                {term.citation_ids.map((id) => (
+                  <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+                ))}
+              </div>
+              <p className="text-sm leading-6 text-[#444748]">{term.explanation}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="rounded-lg border border-[#c4c7c7] bg-white p-5">
+        <h3 className="font-medium">Câu hỏi gợi ý</h3>
+        <div className="mt-4 space-y-3">
+          {report.suggested_questions.map((question) => (
+            <div key={question.question} className="rounded-lg border border-[#c4c7c7]/70 p-4">
+              <p className="font-medium">{question.question}</p>
+              <p className="mt-2 text-sm leading-6 text-[#444748]">{question.rationale}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {question.citation_ids.map((id) => (
+                  <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CitedParagraph({
+  item,
+  report,
+  onSelectCitation,
+}: {
+  item: { text: string; citation_ids: string[] };
+  report: ReportResponse;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  return (
+    <div>
+      <p className="text-sm leading-6 text-[#1a1c19]">{item.text}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.citation_ids.map((id) => (
+          <CitationButton key={id} citationId={id} report={report} onSelectCitation={onSelectCitation} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CitationButton({
+  citationId,
+  report,
+  onSelectCitation,
+}: {
+  citationId: string;
+  report: ReportResponse;
+  onSelectCitation: (citationId: string) => void;
+}) {
+  const citation = report.citations[citationId];
+  if (!citation) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectCitation(citationId)}
+      className="rounded-full bg-[#566340] px-2.5 py-1 font-mono text-[11px] text-white"
+    >
+      {citationLabel(citation)}
+    </button>
+  );
+}
+
+function CitationViewer({
+  report,
+  citationId,
+  citation,
+  page,
+  isLoading,
+}: {
+  report: ReportResponse;
+  citationId: string;
+  citation: CitationMeta | null;
+  page: PageResponse | null;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="min-h-full border-l border-[#c4c7c7] bg-[#fafaf7]">
+      <header className="flex h-18 items-center justify-between border-b border-[#c4c7c7]/70 px-5">
+        <div className="flex items-center gap-2 font-semibold">
+          <Quote className="size-4" />
+          Nguồn trích dẫn
+        </div>
+      </header>
+      <div className="space-y-6 p-5">
+        {!citation ? (
+          <p className="text-sm text-[#444748]">Chọn một citation để xem nguồn.</p>
+        ) : (
+          <>
+            <div>
+              <Badge variant="outline" className="rounded-sm font-mono uppercase">
+                {citationLabel(citation)}
+              </Badge>
+              <h3 className="mt-4 text-lg font-medium">{report.file_name}</h3>
+              <p className="mt-2 font-mono text-xs leading-5 text-[#444748]">
+                {[citation.chapter, citation.article, citation.clause].filter(Boolean).join(" / ")}
+              </p>
+            </div>
+            <div className="rounded-lg border border-[#c4c7c7] bg-white p-5 shadow-sm">
+              {isLoading ? (
+                <p className="text-sm text-[#444748]">Đang tải citation...</p>
+              ) : (
+                <p className="whitespace-pre-line text-sm leading-7 text-[#444748]">
+                  {page?.text ?? citation.excerpt}
+                </p>
+              )}
+            </div>
+            <Button type="button" variant="outline" className="w-full rounded-none">
+              <ExternalLink className="size-4" />
+              Mở toàn tài liệu
+            </Button>
+            <p className="font-mono text-[11px] text-[#444748]">Citation ID: {citationId}</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function PlaceholderPanel({ title }: { title: string }) {
