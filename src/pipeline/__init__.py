@@ -1,8 +1,4 @@
-"""Data extraction pipeline components with dependency-lazy exports.
-
-Consumers using only OCR contracts should not need PyMuPDF or Ultralytics at
-import time.  Concrete components are loaded when their export is accessed.
-"""
+"""Data extraction pipeline components with dependency-lazy exports."""
 
 from __future__ import annotations
 
@@ -16,19 +12,14 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "DocumentParser": ("pdf_parser", "DocumentParser"),
     "DocumentStitcher": ("stitcher", "DocumentStitcher"),
     "ExtractedTextBlock": ("pdf_parser", "ExtractedTextBlock"),
-    "OcrActivationPolicy": ("paddle_ocr", "OcrActivationPolicy"),
-    "PaddleOcrAdapter": ("paddle_ocr", "PaddleOcrAdapter"),
     "PdfProcessingPipeline": ("processor", "PdfProcessingPipeline"),
     "ParsedPage": ("pdf_parser", "ParsedPage"),
     "ProcessedDocument": ("processor", "ProcessedDocument"),
     "ProcessedTable": ("processor", "ProcessedTable"),
     "StitchedPage": ("stitcher", "StitchedPage"),
-    "TableCell": ("paddle_ocr", "TableCell"),
-    "TableData": ("paddle_ocr", "TableData"),
     "TableDetector": ("table_ocr", "TableDetector"),
     "TableMarkdown": ("stitcher", "TableMarkdown"),
-    "ocr_page": ("paddle_ocr", "ocr_page"),
-    "ocr_table": ("paddle_ocr", "ocr_table"),
+    "YoloModelConfigurationError": ("table_ocr", "YoloModelConfigurationError"),
 }
 
 __all__ = list(_EXPORTS)

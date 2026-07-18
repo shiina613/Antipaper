@@ -25,6 +25,7 @@ Xem trạng thái chi tiết tại [docs/PROJECT_PROGRESS.md](docs/PROJECT_PROGR
 | [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Hợp đồng tích hợp backend–frontend |
 | [docs/BUILD_PLAN_48H.md](docs/BUILD_PLAN_48H.md) | Timeline, mốc khóa và phương án dự phòng |
 | [docs/ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Cách kiểm chứng tiêu chí nộp bài |
+| [docs/AI_COLLABORATION_LOG.md](docs/AI_COLLABORATION_LOG.md) | Nhật ký và bằng chứng cộng tác với các công cụ AI |
 | [docs/ONE_PAGE_DECK.md](docs/ONE_PAGE_DECK.md) | Nội dung deck một trang |
 | `docs/TASKS_*.md` | Việc cụ thể của từng thành viên |
 
@@ -54,11 +55,27 @@ Antipaper/
 ## Chạy baseline hiện tại
 
 ```powershell
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements-cuda.txt
 python download_yolo_table_weights.py
 streamlit run app.py
+```
+
+Máy Windows có GPU NVIDIA phải dùng `requirements-cuda.txt`; `requirements.txt`
+không pin CUDA và có thể khiến dependency của Ultralytics cài PyTorch CPU-only.
+Luôn gọi pip qua `python -m pip` sau khi kích hoạt `.venv` để tránh vô tình cài
+vào Python hệ thống (đặc biệt không dùng Python 3.14 cho môi trường demo).
+Nếu `.venv` được uv tạo và không có module `pip`, dùng lệnh tương đương:
+
+```powershell
+uv pip install --python .\.venv\Scripts\python.exe -r requirements-cuda.txt
+```
+
+Kiểm tra runtime sau khi cài:
+
+```powershell
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
 Baseline cần YOLO weights. Kiến trúc hackathon mới sẽ đưa YOLO ra khỏi luồng bắt buộc để ưu tiên tốc độ và độ ổn định.

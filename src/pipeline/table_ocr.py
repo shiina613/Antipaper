@@ -1,27 +1,20 @@
-"""Table detection and table-to-markdown helpers.
+"""YOLOv8 table-region detection helpers.
 
-This module owns the computer-vision side of the pipeline:
-1. Load a YOLOv8 table detector.
-2. Detect table bounding boxes on page images.
-3. Crop detected regions.
-4. Convert cropped table images to markdown.
-
-The markdown conversion is intentionally mocked for the MVP scaffold.
+YOLOv8 is used only for object detection and cropping.  It does not recognize
+text, rows, columns, or Markdown; consumers must treat its output as detection
+metadata rather than OCR output.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Sequence
+from typing import Iterable, Sequence
 
 import cv2
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
-
-if TYPE_CHECKING:
-    from .paddle_ocr import TableData
 
 
 BoundingBox = tuple[float, float, float, float]
@@ -37,28 +30,36 @@ class DetectedTable:
     class_id: int | None = None
 
 
+class YoloModelConfigurationError(RuntimeError):
+    """Raised when table-specific YOLO weights are not configured."""
+
+
 class TableDetector:
     """Detect tables in PDF page images using YOLOv8."""
 
     def __init__(
         self,
-        model_path: str | Path | None = None,
+        model_path: str | Path,
         confidence_threshold: float = 0.25,
+        device: str | int | None = None,
     ) -> None:
-        self.model_path = Path(model_path) if model_path else None
+        self.model_path = Path(model_path)
         self.confidence_threshold = confidence_threshold
+        self.device = device
         self.model: YOLO | None = None
 
     def load_model(self) -> YOLO:
         """Load YOLOv8 weights.
 
-        If no custom model path is supplied, this uses the lightweight
-        pretrained YOLOv8 nano weights. Replace `model_path` with trained
-        table-detection weights once available.
+        A table-specific checkpoint is mandatory. Falling back to generic COCO
+        weights would silently produce semantically invalid table detections.
         """
 
-        weights = str(self.model_path) if self.model_path else "yolov8n.pt"
-        self.model = YOLO(weights)
+        if not self.model_path.is_file():
+            raise YoloModelConfigurationError(
+                f"Table-specific YOLO weights not found: {self.model_path}"
+            )
+        self.model = YOLO(str(self.model_path))
         return self.model
 
     def detect_tables(self, image: ImageLike) -> list[BoundingBox]:
@@ -77,10 +78,15 @@ class TableDetector:
 
         image_array = self._to_numpy(image)
         assert self.model is not None
+        predict_kwargs: dict[str, object] = {
+            "source": image_array,
+            "conf": self.confidence_threshold,
+            "verbose": False,
+        }
+        if self.device is not None:
+            predict_kwargs["device"] = self.device
         results = self.model.predict(
-            source=image_array,
-            conf=self.confidence_threshold,
-            verbose=False,
+            **predict_kwargs,
         )
 
         detections: list[DetectedTable] = []
@@ -120,20 +126,6 @@ class TableDetector:
 
         return crops
 
-    def table_to_markdown(self, cropped_image: ImageLike) -> str:
-        """Convert a cropped table image into markdown.
-
-        This is a placeholder for a future table-structure recognition model or
-        LLM-based parser.
-        """
-
-        _ = cropped_image
-        return (
-            "| Column 1 | Column 2 |\n"
-            "| --- | --- |\n"
-            "| Placeholder | Table content pending parser implementation |"
-        )
-
     @staticmethod
     def _to_numpy(image: ImageLike) -> np.ndarray:
         """Convert PIL or NumPy image input to an OpenCV-friendly array."""
@@ -164,24 +156,3 @@ class TableDetector:
         right = max(0, min(width, int(round(x1))))
         bottom = max(0, min(height, int(round(y1))))
         return left, top, right, bottom
-
-
-def ocr_page(image_bytes: bytes) -> str:
-    """Compatibility entry point for the standalone PaddleOCR adapter."""
-
-    from .paddle_ocr import ocr_page as recognize_page
-
-    return recognize_page(image_bytes)
-
-
-def ocr_table(
-    image_bytes: bytes,
-    *,
-    page: int | None = None,
-    bbox: BoundingBox | None = None,
-) -> "TableData":
-    """Compatibility entry point returning structured PP-StructureV3 output."""
-
-    from .paddle_ocr import ocr_table as recognize_table
-
-    return recognize_table(image_bytes, page=page, bbox=bbox)

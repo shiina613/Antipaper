@@ -1,9 +1,11 @@
-# Bàn giao HAU — Intelligence và OCR fallback
+# Bàn giao HAU — Intelligence và YOLOv8 table detection
 
 ## Context
 
-Hai adapter được thiết kế tách khỏi ingestion và model client để các consumer có
-thể dùng fixture/test double trước khi integration production hoàn tất.
+Lớp intelligence được tách khỏi ingestion và model client để các consumer có
+thể dùng fixture/test double trước khi tích hợp production. Theo quyết định kỹ
+thuật mới, toàn bộ PaddleOCR/PP-Structure đã được loại bỏ; pipeline chỉ dùng
+YOLOv8 hiện có để phát hiện và cắt vùng bảng.
 
 ## Contract intelligence
 
@@ -13,55 +15,68 @@ from intelligence import IntelligenceReport, NormalizedDocument, build_intellige
 report = await build_intelligence(
     NormalizedDocument.model_validate(payload),
     call_llm=shared_call_llm,
-    citation_validator=validate_citations,  # optional; whitelist nội bộ luôn chạy
+    citation_validator=validate_citations,
 )
 ```
 
 - `call_llm(messages, response_model)` phải là client dùng chung và trả object
   tương thích `response_model`.
 - Map chạy theo batch 7 trang mặc định; cấu hình chỉ cho phép 6–8 trang.
-- Mọi output item thiếu nguồn bị loại. Citation hợp lệ phải là `chunk_id` thuộc
-  document; validator ngoài chỉ có thể thu hẹp whitelist, không thể mở rộng.
-- `IntelligenceReport.model_json_schema()` là JSON schema nguồn cho structured
-  output. Prompt được version-control tại `src/intelligence/prompts.py`.
-- `stage_timings` ghi thời gian map/reduce/validation; `quality` ghi checklist
-  định lượng. `quality.passed=false` không có nghĩa report bị bịa, mà nghĩa chưa
-  đủ ngưỡng nghiệm thu (4 summary sections, 10 terms, 5 questions đạt rubric).
+- Output thiếu nguồn bị loại. Citation hợp lệ phải là `chunk_id` thuộc document;
+  validator ngoài chỉ có thể thu hẹp whitelist, không thể mở rộng.
+- `IntelligenceReport.model_json_schema()` là JSON schema cho structured output.
+- `stage_timings` ghi map/reduce/validation; `quality` ghi checklist định lượng.
 
-Fixture dùng chung nằm tại `docs/fixtures/normalized_document.mock.json` và
-`docs/fixtures/intelligence_report.mock.json`.
+Fixture dùng chung:
 
-## Contract OCR
+- `docs/fixtures/normalized_document.mock.json`
+- `docs/fixtures/intelligence_report.mock.json`
+
+## Contract YOLOv8
 
 ```python
-from pipeline import OcrActivationPolicy, ocr_page, ocr_table
+from pipeline import TableDetector
 
-policy = OcrActivationPolicy()
-if policy.should_ocr_page(native_text):
-    text = ocr_page(image_bytes)
-
-table = ocr_table(image_bytes, page=3, bbox=(10, 20, 500, 700))
-markdown = table.markdown
-json_payload = table.model_dump(mode="json")
+detector = TableDetector(
+    "models/table_detect_yolov8.pt",
+    confidence_threshold=0.25,
+    device=0,
+)
+detections = detector.detect(page_image)
+crops = detector.crop_tables(page_image, [item.bbox for item in detections])
 ```
 
-| Quyết định router | Mặc định | Lý do |
-|---|---:|---|
-| OCR trang | native text dưới 80 ký tự hoặc alphanumeric ratio dưới 0.35 | Tránh OCR toàn tài liệu |
-| OCR bảng | bảng ảnh, hoặc native table dưới 2 hàng/2 cột, hoặc không có text | Chỉ fallback khi extraction native không đủ cấu trúc |
+Model đã xác nhận là checkpoint table-specific với hai lớp `bordered` và
+`borderless`. Model path là bắt buộc; thiếu checkpoint sẽ fail-closed thay vì
+tự tải weight COCO chung.
 
-PaddleOCR được lazy-load nên import pipeline và unit test không tải model.
-Runtime đã được pin cho Windows, Python 3.12 và CUDA 12.6 trong
-`requirements.txt`; backend tự chọn `gpu:0` khi Paddle CUDA thấy GPU và fallback
-về CPU khi CUDA không khả dụng. Có thể ép thiết bị khi kiểm thử bằng
-`PaddleOcrBackend(device="cpu")` hoặc `PaddleOcrBackend(device="gpu:0")`.
-`PaddleOcrAdapter(backend=test_double)` cho phép test độc lập hoàn toàn bằng
-`image_bytes`. Tuấn chịu trách nhiệm crop/router page/bbox trong pipeline.
+| Trường | Có từ YOLOv8 | Ý nghĩa |
+|---|---:|---|
+| `bbox` | Có | Vùng bảng trong hệ tọa độ ảnh |
+| `confidence` | Có | Độ tin cậy detection |
+| `class_id` | Có | `bordered` hoặc `borderless` |
+| crop ảnh | Có | Ảnh con phục vụ consumer tiếp theo |
+| text tiếng Việt | Không | YOLO không nhận dạng ký tự |
+| row/column/cell | Không | YOLO không nhận dạng cấu trúc bảng |
+| Markdown/JSON nội dung | Không | Không được tạo placeholder hoặc suy diễn |
+
+`PdfProcessingPipeline` giữ nguyên native PDF text và chỉ đính kèm detection
+metadata. Pipeline không che vùng bảng rồi thay bằng nội dung rỗng, nhờ đó tránh
+mất text layer khi không có OCR thay thế.
 
 ## Reliability constraints
 
-- Image bytes rỗng/hỏng gây `InvalidImageError`; table không có cell gây
-  `OcrError`, không trả bảng placeholder.
-- Map batch lỗi một phần vẫn cho phép reduce các batch hợp lệ; tất cả batch lỗi
-  gây `IntelligenceGenerationError`.
+- Không có model table-specific thì dừng với `YoloModelConfigurationError`.
+- Bounding box được clip vào kích thước ảnh; vùng rỗng bị loại.
+- Không còn export `ocr_page`, `ocr_table`, `PaddleOcrAdapter` hay
+  `table_to_markdown` placeholder.
+- Map batch lỗi một phần vẫn reduce các batch hợp lệ; tất cả batch lỗi gây
+  `IntelligenceGenerationError`.
 - Không có chunk thì trả report rỗng và không gọi model.
+
+## Giới hạn nghiệm thu HAU-05
+
+HAU-05 theo mô tả gốc yêu cầu OCR tiếng Việt, đúng hàng/cột và Markdown/JSON.
+YOLOv8 thuần không thể đáp ứng các đầu ra này. Phần đạt được sau thay đổi phạm vi
+là detection/crop trên ảnh thật với `page`, `bbox`, `confidence` và class; phần
+OCR nội dung được đánh dấu không đạt thay vì tạo dữ liệu giả.

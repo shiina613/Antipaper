@@ -28,7 +28,7 @@ Streamlit được giữ làm giao diện dự phòng nếu Next.js chưa tích 
 
 1. Kiểm tra PDF/DOCX, kích thước và MIME; tạo `document_id` từ SHA-256.
 2. PDF có text layer đi thẳng qua PyMuPDF. Chỉ OCR trang gần như rỗng.
-3. Bảng native dùng `Page.find_tables()`; bảng ảnh/scan mới crop vùng và chạy PaddleOCR PP-StructureV3.
+3. Bảng native dùng `Page.find_tables()`; YOLOv8 table-specific chỉ phát hiện/crop vùng bảng ảnh và không sinh nội dung OCR.
 4. Tách Chương/Mục/Điều/Khoản bằng regex; mỗi chunk/bảng giữ metadata nguồn.
 5. Chia tài liệu theo nhóm 6–8 trang; gọi LLM song song để tạo bản tóm tắt cục bộ.
 6. Một lượt reduce tạo bối cảnh, nội dung chính, điểm quyết định và tác động.
@@ -69,11 +69,11 @@ Benchmark tính từ lúc backend nhận đủ file đến khi report chuyển s
 
 | Quyết định | Lý do |
 |---|---|
-| Không chạy YOLO trên mọi trang | Tốn latency; văn bản demo có text layer và ít bảng phức tạp |
-| PaddleOCR chỉ là fallback | Table OCR nặng; chỉ chạy khi `find_tables()` không đọc được bảng ảnh/scan |
+| Chỉ chạy YOLO trên trang cần kiểm tra bảng ảnh | Bảo vệ latency; checkpoint chỉ trả vùng `bordered`/`borderless` |
+| Không có OCR fallback | Quyết định phạm vi hiện tại chỉ cho phép YOLOv8; bảng scan không có text layer sẽ không có nội dung để phân tích |
 | Không dùng LangChain | Giảm abstraction, dependency và thời gian debug |
 | Không dùng vector database | Một tài liệu 40–60 trang đủ nhỏ để index trong RAM |
-| Không OCR toàn tài liệu | Làm chậm luồng chính; OCR chỉ là fallback theo trang |
+| Không OCR tài liệu | Pipeline hiện chỉ dùng native text và YOLOv8 table detection |
 | Không tìm kiếm web trực tiếp | Khó kiểm soát độ tin cậy; ưu tiên căn cứ trong tài liệu và catalog nguồn chính thống |
 
 ## 7. Độ tin cậy và an toàn

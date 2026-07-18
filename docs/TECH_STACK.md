@@ -9,8 +9,8 @@
 | PDF | PyMuPDF | Trích xuất nhanh, giữ số trang và block vị trí |
 | Word | python-docx | Đủ cho DOCX native trong phạm vi demo |
 | Bảng PDF native | `PyMuPDF Page.find_tables()` | Lấy ô/hàng/cột trực tiếp, xuất Markdown mà không render ảnh |
-| Bảng ảnh/scan | PaddleOCR PP-StructureV3 / Table Recognition v2 | Nhận dạng cấu trúc bảng, OCR nội dung ô, xuất HTML/Markdown/JSON |
-| Crop vùng bảng | YOLOv8 hiện có, tùy chọn | Chỉ phát hiện/crop vùng bảng trước PaddleOCR; không tự nhận dạng nội dung |
+| Bảng ảnh/scan | YOLOv8 table-specific hiện có | Chỉ phát hiện/crop bảng `bordered` và `borderless`; không nhận dạng nội dung |
+| Runtime GPU | PyTorch CUDA 12.6 + Ultralytics | Chạy inference YOLOv8 trên GPU của máy demo |
 | AI | SDK LLM trực tiếp, model cấu hình qua biến môi trường | Tránh khóa model và giảm abstraction |
 | Truy hồi | Embedding API + cosine similarity trong RAM | Dữ liệu một tài liệu nhỏ; không cần vector database |
 | Văn bản liên quan | Regex số hiệu/căn cứ + catalog JSON cục bộ | Nguồn kiểm soát được, dễ demo và có thể giải thích |
@@ -37,15 +37,15 @@ pytest
 
 Thêm SDK chính thức của nhà cung cấp LLM sau khi chốt API key. Không thêm LangChain, Chroma/FAISS, Celery hoặc Redis trong luồng bắt buộc.
 
-OCR bảng chỉ cài khi bật fallback ảnh/scan:
+YOLOv8 GPU trên máy Windows/Python 3.12:
 
 ```text
-paddleocr
-paddlepaddle        # Bản CPU hoặc GPU phải khớp môi trường chạy
-pandas
+ultralytics
+torch               # CUDA wheel phải khớp driver/runtime
+torchvision
 ```
 
-Không ghi cứng phiên bản `paddlepaddle` trước khi chốt CPU/GPU của máy demo. Cài và tải model trước khi hackathon; không để lần demo đầu tiên mới tải weights.
+Checkpoint `models/table_detect_yolov8.pt` là bắt buộc. Không fallback sang weight COCO chung vì các class đó không đại diện cho bảng.
 
 ## 3. Chiến lược đọc bảng
 
@@ -53,17 +53,16 @@ Không ghi cứng phiên bản `paddlepaddle` trước khi chốt CPU/GPU của 
 Trang PDF
   ├─ Có text/vector lines → PyMuPDF find_tables() → Markdown/JSON
   └─ Bảng dạng ảnh/scan
-       ├─ YOLO crop vùng bảng (nếu cần)
-       └─ PP-StructureV3/Table Recognition v2 → cells + OCR → Markdown/JSON
+       └─ YOLOv8 table-specific → bbox + confidence + class + crop ảnh
 ```
 
-Mỗi bảng phải giữ `page`, `bbox`, số hàng/cột, nội dung ô và confidence. Chỉ chạy PaddleOCR trên trang/bbox cần thiết để bảo vệ ngưỡng 60 giây.
+Mỗi detection phải giữ `page`, `bbox`, confidence và class. YOLOv8 không cung cấp số hàng/cột, nội dung ô hoặc Markdown/JSON.
 
 ## 4. Thành phần giữ nhưng không bắt buộc
 
 | Thành phần cũ | Quyết định |
 |---|---|
-| YOLO/Ultralytics | Chỉ phát hiện/crop vùng bảng ảnh; không dùng thay table structure OCR |
+| YOLO/Ultralytics | Thành phần duy nhất cho bảng ảnh; contract giới hạn ở detection/crop |
 | OpenCV/pdf2image | Chỉ dùng nếu triển khai OCR/table fallback |
 | Streamlit | Giữ làm phương án demo dự phòng |
 | Logic rule-based | Giữ làm fallback khi LLM lỗi; không dùng làm kết quả chấm chính |
@@ -79,8 +78,8 @@ MAX_LLM_CONCURRENCY=5
 MAX_FILE_MB=25
 ARTIFACT_DIR=.artifacts
 FRONTEND_ORIGIN=http://localhost:3000
-ENABLE_TABLE_OCR=false
-TABLE_OCR_DEVICE=cpu
+ENABLE_TABLE_DETECTION=true
+TABLE_YOLO_DEVICE=0
 ```
 
 Không commit `.env`, API key, output tài liệu hoặc log chứa toàn văn.

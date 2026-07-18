@@ -11,19 +11,21 @@ import fitz
 from PIL import Image
 
 from .pdf_parser import DocumentParser, ParsedPage
-from .stitcher import DocumentStitcher, StitchedPage, TableMarkdown
+from .stitcher import DocumentStitcher, StitchedPage
 from .table_ocr import BoundingBox, DetectedTable, TableDetector
 
 
 @dataclass(frozen=True)
 class ProcessedTable:
-    """A detected table with markdown and page-level metadata."""
+    """A YOLO-detected table region with source metadata."""
 
     page_number: int
     image_bbox: BoundingBox
     page_bbox: BoundingBox
-    markdown: str
     confidence: float | None = None
+    class_id: int | None = None
+    crop_width: int = 0
+    crop_height: int = 0
 
 
 @dataclass(frozen=True)
@@ -54,12 +56,14 @@ class PdfProcessingPipeline:
         model_path: str | Path,
         confidence_threshold: float = 0.25,
         render_scale: float = 2.0,
+        device: str | int | None = None,
     ) -> None:
         self.model_path = Path(model_path)
         self.render_scale = render_scale
         self.detector = TableDetector(
             model_path=self.model_path,
             confidence_threshold=confidence_threshold,
+            device=device,
         )
         self.stitcher = DocumentStitcher()
 
@@ -89,13 +93,13 @@ class PdfProcessingPipeline:
                 page_number = page_index + 1
                 image = self._render_page(page)
                 detections = self.detector.detect(image)
-                image_bboxes = [detection.bbox for detection in detections]
-
+                # YOLO is detection-only. Preserve all native PDF text because
+                # there is no OCR/structure model available to replace masked
+                # table content.
                 parsed_page = parser.extract_page_text_outside_tables(
                     page=page,
                     page_number=page_number,
-                    table_bboxes=image_bboxes,
-                    image_size=image.size,
+                    table_bboxes=[],
                 )
                 parsed_pages.append(parsed_page)
 
@@ -107,16 +111,8 @@ class PdfProcessingPipeline:
                 )
                 tables_by_page[page_number] = page_tables
 
-                markdown_tables = [
-                    TableMarkdown(
-                        markdown=table.markdown,
-                        bbox=table.page_bbox,
-                        confidence=table.confidence,
-                    )
-                    for table in page_tables
-                ]
                 stitched_pages.append(
-                    self.stitcher.stitch_page(parsed_page, markdown_tables)
+                    self.stitcher.stitch_page(parsed_page, [])
                 )
 
         elapsed = perf_counter() - start_time
@@ -141,22 +137,26 @@ class PdfProcessingPipeline:
         image_size: tuple[int, int],
         detections: Sequence[DetectedTable],
     ) -> list[ProcessedTable]:
-        image_bboxes = [detection.bbox for detection in detections]
-        crops = self.detector.crop_tables(image, image_bboxes)
-        page_bboxes = [
-            self._scale_image_bbox_to_page(bbox, page=page, image_size=image_size)
-            for bbox in image_bboxes
-        ]
-
         tables: list[ProcessedTable] = []
-        for detection, crop, page_bbox in zip(detections, crops, page_bboxes):
+        for detection in detections:
+            crops = self.detector.crop_tables(image, [detection.bbox])
+            if not crops:
+                continue
+            crop = crops[0]
+            page_bbox = self._scale_image_bbox_to_page(
+                detection.bbox,
+                page=page,
+                image_size=image_size,
+            )
             tables.append(
                 ProcessedTable(
                     page_number=page.number + 1,
                     image_bbox=detection.bbox,
                     page_bbox=page_bbox,
-                    markdown=self.detector.table_to_markdown(crop),
                     confidence=detection.confidence,
+                    class_id=detection.class_id,
+                    crop_width=int(crop.shape[1]),
+                    crop_height=int(crop.shape[0]),
                 )
             )
         return tables
