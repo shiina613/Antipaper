@@ -13,6 +13,11 @@ def _normalize_text(value: str) -> str:
 
 def _excerpt_is_source(excerpt: str, source: str) -> bool:
     """Accept source-leading excerpts despite terminal punctuation differences."""
+    excerpt_normalized = _normalize_text(excerpt)
+    source_normalized = _normalize_text(source)
+    if excerpt_normalized.endswith("..."):
+        prefix = excerpt_normalized[:-3].rstrip()
+        return bool(prefix) and source_normalized.startswith(prefix)
     excerpt_words = excerpt.casefold().split()
     source_words = source.casefold().split()
     if source_words[: len(excerpt_words)] == excerpt_words:

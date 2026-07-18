@@ -332,7 +332,10 @@ class DocumentIngestor:
         compact = re.sub(r"\s+", " ", text).strip()
         if len(compact) <= max_chars:
             return compact
-        return compact[: max_chars - 3].rstrip() + "..."
+        prefix = compact[: max_chars - 3].rstrip()
+        if " " in prefix:
+            prefix = prefix.rsplit(" ", 1)[0]
+        return prefix + "..."
 
     @staticmethod
     def _document_id(path: Path) -> str:
