@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 from io import BytesIO
+import os
 from pathlib import Path
 import re
+import time
 from typing import Iterable
 import unicodedata
 
@@ -16,6 +18,17 @@ from ..intelligence.contracts import Citation, DocumentChunk, NormalizedDocument
 
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
+
+
+def _default_table_budget_seconds() -> float:
+    """Resolve the per-document table-detection time budget from the environment.
+
+    `INGESTION_TABLE_BUDGET_SECONDS` sets the cap directly. The legacy on/off switch
+    `INGESTION_EXTRACT_TABLES=0` maps to a zero budget (skip detection entirely).
+    """
+    if os.getenv("INGESTION_EXTRACT_TABLES", "1").strip().lower() in {"0", "false", "no"}:
+        return 0.0
+    return max(0.0, float(os.getenv("INGESTION_TABLE_BUDGET_SECONDS", "8.0")))
 
 
 class IngestionError(RuntimeError):
@@ -36,6 +49,7 @@ class IngestionOptions:
 
     max_file_size_bytes: int = MAX_FILE_SIZE_BYTES
     max_pages: int | None = None
+    table_extraction_budget_seconds: float = field(default_factory=_default_table_budget_seconds)
 
 
 @dataclass(frozen=True)
@@ -149,17 +163,29 @@ class DocumentIngestor:
 
     def _load_pdf_bytes(self, file_bytes: bytes) -> list[StitchedPage]:
         pages: list[StitchedPage] = []
+        # Native table detection runs a full per-page layout analysis and is the single most
+        # expensive part of parsing, which dominates wall-clock on constrained (serverless) CPU
+        # and, because it holds the GIL, multiplies under concurrent uploads. Set the budget to
+        # 0 to skip it entirely; otherwise cap the *total* time spent on it per document so a
+        # long document (or a slow CPU) can never let table detection blow the ingestion budget.
+        # Text extraction — which produces every chunk and citation — is never affected.
+        table_budget = self.options.table_extraction_budget_seconds
+        table_time_spent = 0.0
         with fitz.open(stream=file_bytes, filetype="pdf") as document:
             page_limit = min(self.options.max_pages or document.page_count, document.page_count)
             for page_index in range(page_limit):
                 page = document[page_index]
                 text = page.get_text("text", sort=True).strip()
-                table_markdown = self._extract_native_tables_markdown(page)
+                table_markdown = ""
+                if table_budget > 0 and table_time_spent < table_budget:
+                    started = time.perf_counter()
+                    table_markdown = self._extract_native_tables_markdown(page)
+                    table_time_spent += time.perf_counter() - started
                 content_parts = [part for part in [text, table_markdown] if part]
                 pages.append(
                     StitchedPage(
                         page_number=page_index + 1,
-                    content=self._normalize_unicode("\n\n".join(content_parts)),
+                        content=self._normalize_unicode("\n\n".join(content_parts)),
                     )
                 )
         return pages

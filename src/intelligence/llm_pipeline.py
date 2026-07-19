@@ -111,7 +111,9 @@ class LlmPipelineSettings:
             map_batch_chars=max(2_000, int(os.getenv("LLM_MAP_BATCH_CHARS", "24000"))),
             map_max_batch_chars=max(24_000, int(os.getenv("LLM_MAP_MAX_BATCH_CHARS", "100000"))),
             map_target_batches=max(1, int(os.getenv("LLM_MAP_TARGET_BATCHES", "6"))),
-            map_concurrency=max(1, min(3, int(os.getenv("LLM_MAP_CONCURRENCY", "3")))),
+            # Enough concurrency to run the default ~6 map batches in a single wave instead of
+            # two, which removes a full serialized LLM round-trip from the critical path.
+            map_concurrency=max(1, min(8, int(os.getenv("LLM_MAP_CONCURRENCY", "6")))),
             map_budget_seconds=float(os.getenv("LLM_MAP_BUDGET_SECONDS", "55")),
             reduce_budget_seconds=float(os.getenv("LLM_REDUCE_BUDGET_SECONDS", "20")),
             questions_budget_seconds=float(os.getenv("LLM_QUESTIONS_BUDGET_SECONDS", "20")),
