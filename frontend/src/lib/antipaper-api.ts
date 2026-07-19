@@ -10,6 +10,9 @@ export type DocumentStatus = "queued" | "processing" | "completed" | "failed";
 export type ProcessingStage =
   | "queued"
   | "parsing"
+  | "mapping"
+  | "reducing"
+  | "generating_questions"
   | "generating"
   | "ready"
   | "answering"
@@ -66,6 +69,22 @@ export type CitedText = {
   citation_ids: string[];
 };
 
+export type ReportQuality = {
+  pipeline: string;
+  map_batch_count: number;
+  map_wave_count?: number;
+  question_count: number;
+  summary_sections_complete: boolean;
+  citations_valid: boolean;
+  report_status: "complete" | "partial";
+  passed: boolean;
+  input_characters?: number;
+  llm_call_count?: number;
+  retry_count?: number;
+  queue_ms?: number;
+  stage_timings?: Array<{ stage: string; duration_ms: number }>;
+};
+
 export type ReportResponse = {
   document_id: string;
   file_name: string;
@@ -99,8 +118,8 @@ export type ReportResponse = {
     excerpt?: string | null;
   }>;
   citations: Record<string, CitationMeta>;
-  generation_mode?: "llm";
-  quality?: Record<string, unknown> | null;
+  generation_mode?: "llm" | "terminology_partial";
+  quality?: ReportQuality | null;
   enrichment_status: "not_configured" | "pending" | "completed" | "failed";
 };
 
@@ -186,6 +205,9 @@ export function stageLabel(stage: ProcessingStage | string): string {
   const labels: Record<string, string> = {
     queued: "Đang xếp hàng",
     parsing: "Đọc và chuẩn hóa tài liệu",
+    mapping: "Trích xuất bằng chứng toàn tài liệu",
+    reducing: "Tổng hợp báo cáo có dẫn nguồn",
+    generating_questions: "Sinh câu hỏi phản biện",
     generating: "Tạo báo cáo có dẫn nguồn",
     extracting: "Trích xuất văn bản",
     detecting_tables: "Nhận diện bảng",

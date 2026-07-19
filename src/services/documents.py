@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,17 +25,23 @@ from ..persistence.history import TaskHistoryStore
 from ..retrieval import RetrievalIndex, build_index
 from ..schemas import (
     DocumentReport, DocumentStatus, ErrorDetail, PageBlock, PageResponse,
-    QuestionResponse, SourcePreview, StatusResponse, TaskHistoryItem,
+    QuestionResponse, SourcePreview, StageTiming, StatusResponse, TaskHistoryItem,
     TaskHistoryPage, UploadResponse,
 )
-from .orchestrator import DocumentOrchestrator, ProcessedDocument, QuestionTrace
+from .orchestrator import (
+    AnalysisTextLimitExceeded,
+    DocumentOrchestrator,
+    ProcessedDocument,
+    ProcessingDeadlineExceeded,
+    QuestionTrace,
+)
 
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
-WORKER_DEADLINE_SECONDS = float(os.getenv("PROCESSING_DEADLINE_SECONDS", "48"))
-STAGE_QUEUED, STAGE_PARSING, STAGE_GENERATING, STAGE_READY, STAGE_FAILED = (
-    "queued", "parsing", "generating", "ready", "failed"
+WORKER_DEADLINE_SECONDS = float(os.getenv("PROCESSING_DEADLINE_SECONDS", "110"))
+STAGE_QUEUED, STAGE_PARSING, STAGE_MAPPING, STAGE_REDUCING, STAGE_QUESTIONS, STAGE_READY, STAGE_FAILED = (
+    "queued", "parsing", "mapping", "reducing", "generating_questions", "ready", "failed"
 )
 
 
@@ -118,17 +124,23 @@ class DocumentStore:
         if record.status == "completed":
             return
         started = time.perf_counter()
+        queued_ms = max((datetime.now(timezone.utc) - record.created_at).total_seconds() * 1000, 0.0)
+
+        def on_stage(stage: str) -> None:
+            progress = {STAGE_MAPPING: 45, STAGE_REDUCING: 65, STAGE_QUESTIONS: 80}.get(stage, 20)
+            self._transition(record, status="processing", stage=stage, progress=progress)
+
         try:
             self._transition(record, status="processing", stage=STAGE_PARSING, progress=15)
             result = self._orchestrator.process(
                 document_id=record.document_id,
                 file_name=record.file_name,
                 file_bytes=record.file_bytes,
+                deadline_seconds=WORKER_DEADLINE_SECONDS,
+                stage_callback=on_stage,
             )
             elapsed = time.perf_counter() - started
-            if elapsed > WORKER_DEADLINE_SECONDS:
-                raise TimeoutError("Document processing exceeded the 48 second deadline.")
-            self._transition(record, status="processing", stage=STAGE_GENERATING, progress=80)
+            persist_started = time.perf_counter()
             record.processed_document = result.processed_document
             record.retrieval_index = build_index(result.normalized_document)
             record.pages = [
@@ -136,11 +148,26 @@ class DocumentStore:
                 for page in result.processed_document.stitched_pages
             ]
             record.page_count = result.processed_document.page_count
+            if time.perf_counter() - started > WORKER_DEADLINE_SECONDS:
+                raise ProcessingDeadlineExceeded("Processing deadline exceeded during persist.")
+            elapsed = time.perf_counter() - started
             record.processing_seconds = round(elapsed, 3)
-            record.report = result.report.model_copy(update={
-                "processing_seconds": record.processing_seconds,
-                "enrichment_status": "pending" if self._related_document_finder else "not_configured",
-            })
+            persist_ms = round((time.perf_counter() - persist_started) * 1000, 3)
+            record.report = result.report.model_copy(
+                update={
+                    "processing_seconds": record.processing_seconds,
+                    "enrichment_status": "pending" if self._related_document_finder else "not_configured",
+                    "quality": result.report.quality.model_copy(
+                        update={
+                            "queue_ms": round(queued_ms, 3),
+                            "stage_timings": [
+                                *result.report.quality.stage_timings,
+                                StageTiming(stage="persist", duration_ms=persist_ms),
+                            ],
+                        }
+                    ),
+                }
+            )
             record.processed_at = datetime.now(timezone.utc)
             self._transition(record, status="completed", stage=STAGE_READY, progress=100)
             if self._related_document_finder:
@@ -149,8 +176,8 @@ class DocumentStore:
             self._fail(record, "UNSUPPORTED_FILE", str(exc))
         except FileTooLargeError as exc:
             self._fail(record, "FILE_TOO_LARGE", str(exc))
-        except TimeoutError as exc:
-            self._fail(record, "MODEL_TIMEOUT", str(exc))
+        except ProcessingDeadlineExceeded as exc:
+            self._fail(record, "GLOBAL_DEADLINE_EXCEEDED", str(exc))
         except LlmClientTimeoutError as exc:
             self._fail(record, "MODEL_TIMEOUT", str(exc))
         except LlmClientConfigurationError as exc:
@@ -159,6 +186,8 @@ class DocumentStore:
             self._fail(record, "LLM_GENERATION_FAILED", str(exc))
         except LlmClientError as exc:
             self._fail(record, "LLM_GENERATION_FAILED", str(exc))
+        except AnalysisTextLimitExceeded as exc:
+            self._fail(record, "ANALYSIS_TEXT_LIMIT_EXCEEDED", str(exc))
         except IngestionError as exc:
             self._fail(record, "PROCESSING_FAILED", str(exc))
         except Exception as exc:  # Defensive boundary for background workers.
@@ -214,12 +243,13 @@ class DocumentStore:
         record.future = self._executor.submit(self.process_document, record.document_id)
 
     def _wait_for_completion(self, record: DocumentRecord) -> DocumentRecord:
-        future = record.future
-        if future and record.status in {"queued", "processing"}:
-            try:
-                future.result(timeout=WORKER_DEADLINE_SECONDS)
-            except FutureTimeoutError as exc:
-                raise ApiError(code="MODEL_TIMEOUT", message="Document processing timed out.", status_code=504, retryable=True) from exc
+        if record.status in {"queued", "processing"}:
+            raise ApiError(
+                code="DOCUMENT_PROCESSING",
+                message="Document processing is still in progress.",
+                status_code=409,
+                retryable=True,
+            )
         return record
 
     def _transition(self, record: DocumentRecord, *, status: DocumentStatus, stage: str, progress: int) -> None:

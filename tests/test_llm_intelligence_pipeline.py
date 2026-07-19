@@ -25,7 +25,7 @@ class FakeLlm:
         self.invalid_map_citation = invalid_map_citation
         self.map_inputs: list[str] = []
 
-    async def call(self, messages, response_model):  # noqa: ANN001
+    async def call(self, messages, response_model, **_kwargs):  # noqa: ANN001
         if response_model is MapBatch:
             source = messages[-1]["content"]
             self.map_inputs.append(source)

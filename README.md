@@ -71,8 +71,10 @@ Sao chép từ [.env.example](.env.example). Không commit bí mật.
 |---|---|
 | `OPENAI_API_KEY` / `LLM_API_KEY` | Khóa LLM bắt buộc để phát hành báo cáo. Thiếu khóa làm document task thất bại (`llm_status: disabled`). |
 | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS` | Cấu hình endpoint/model/giới hạn một lượt gọi LLM. |
-| `LLM_MAP_BATCH_CHARS`, `LLM_MAP_CONCURRENCY` | Ngân sách batch và số map request đồng thời của pipeline tổng hợp phân tầng. |
-| `PROCESSING_DEADLINE_SECONDS` | Hạn xử lý mỗi tài liệu (mặc định 48s). |
+| `LLM_MAP_BATCH_CHARS`, `LLM_MAP_MAX_BATCH_CHARS`, `LLM_MAP_TARGET_BATCHES`, `LLM_MAP_CONCURRENCY` | Batch thích ứng và số map request đồng thời của pipeline tổng hợp phân tầng. |
+| `MAX_LLM_CONCURRENCY` | Request LLM tối đa đang hoạt động trên toàn tiến trình. |
+| `MAX_ANALYZABLE_TEXT_CHARS` | Trần text trích xuất được xử lý trong SLA (mặc định 600.000 ký tự). |
+| `PROCESSING_DEADLINE_SECONDS` | Hạn xử lý thực mỗi tài liệu (mặc định 110s). |
 | `HISTORY_DB_PATH` | SQLite lưu lịch sử tác vụ (mặc định `.runtime/history.sqlite3`). |
 | `TAVILY_*`, `RELATED_DOCUMENT_MAX_REFERENCES` | Làm giàu tài liệu liên quan chạy nền (tùy chọn). |
 | `FRONTEND_ORIGIN` | Origin frontend cho cấu hình CORS. |

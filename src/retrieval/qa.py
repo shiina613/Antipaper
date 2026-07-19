@@ -216,7 +216,12 @@ class GroundedQAService:
             rare_overlap = sum(document_frequency[word] == 1 for word in overlap)
             legal_identifier = has_legal_identifier and bool(overlap)
             coverage = len(overlap) / max(1, len(query_words))
-            strong_coverage = len(overlap) >= 4 and coverage >= 0.6
+            # A long, conversational question dilutes the coverage ratio, and a repetitive
+            # legal corpus leaves almost no single-chunk ("rare") words, so neither the
+            # coverage nor the rare-word signal fires even when a chunk overlaps many query
+            # terms. Treat a high absolute overlap as its own support signal; the source
+            # selection in _extractive_sources still bounds how many chunks are cited.
+            strong_coverage = len(overlap) >= 4 and (coverage >= 0.6 or len(overlap) >= 10)
             lexical_supported = result.lexical_score > 0 and len(overlap) >= 2 and (rare_overlap >= 2 or strong_coverage)
             if exact_phrase or legal_identifier or lexical_supported:
                 support.append(result)

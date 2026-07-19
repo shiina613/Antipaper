@@ -83,6 +83,13 @@ class TerminologyQuality(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class StageTiming(BaseModel):
+    """Latency telemetry for one bounded processing stage."""
+
+    stage: str
+    duration_ms: float = Field(ge=0.0)
+
+
 class ReportQuality(BaseModel):
     pipeline: str
     map_batch_count: int = Field(ge=0)
@@ -92,6 +99,12 @@ class ReportQuality(BaseModel):
     report_status: Literal["complete", "partial"]
     passed: bool
     terminology: TerminologyQuality
+    input_characters: int = Field(default=0, ge=0)
+    map_wave_count: int = Field(default=0, ge=0)
+    llm_call_count: int = Field(default=0, ge=0)
+    retry_count: int = Field(default=0, ge=0)
+    queue_ms: float = Field(default=0.0, ge=0.0)
+    stage_timings: list[StageTiming] = Field(default_factory=list)
 
 
 class SuggestedQuestion(BaseModel):

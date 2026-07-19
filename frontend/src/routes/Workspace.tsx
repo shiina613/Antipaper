@@ -905,9 +905,7 @@ function UploadWorkspace({
             <UploadGoal title="Câu hỏi phản biện" description="Các câu hỏi cần đặt trong cuộc họp, kèm lý do và căn cứ." />
             <UploadGoal title="Kiểm chứng một thao tác" description="Mỗi nhận định quan trọng mở đúng trang và đoạn nguồn." />
           </div>
-          <div className="mt-6 border-t border-[#e2dac6] pt-5 text-xs leading-5 text-[#5c6675]">
-            Chỉ tải tài liệu công khai hoặc đã được phê duyệt cho môi trường demo.
-          </div>
+          
         </aside>
       </div>
 
@@ -1070,7 +1068,7 @@ function ProcessingWorkspace({
 
       {(failed || error) && (
         <div className="mt-8 border-t border-[#e2dac6] pt-5">
-          <InlineError message={error ?? status.error?.message ?? "Quá trình xử lý đã thất bại."} />
+          <InlineError message={error ?? processingFailureMessage(status.error?.code, status.error?.message)} />
           <div className="mt-4 flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={onRetry}>
               <RefreshCcw className="size-4" /> Theo dõi lại
@@ -1086,8 +1084,9 @@ function ProcessingWorkspace({
 const processingSteps = [
   { id: "queued", label: "Đưa vào hàng đợi" },
   { id: "extracting", label: "Bóc tách văn bản & metadata" },
-  { id: "indexing", label: "Lập chỉ mục theo trang/điều" },
-  { id: "reporting", label: "Tổng hợp & sinh báo cáo" },
+  { id: "mapping", label: "Trích xuất bằng chứng toàn tài liệu" },
+  { id: "reducing", label: "Tổng hợp báo cáo có dẫn nguồn" },
+  { id: "generating_questions", label: "Sinh câu hỏi phản biện" },
   { id: "completed", label: "Hoàn tất" },
 ] as const;
 
@@ -1097,12 +1096,15 @@ function processingStepIndex(status: StatusResponse) {
     parsing: 1,
     extracting: 1,
     detecting_tables: 1,
-    stitching: 2,
+    stitching: 1,
+    mapping: 2,
+    reducing: 3,
+    generating_questions: 4,
     generating: 3,
     summarizing: 3,
-    ready: 4,
-    completed: 4,
-    failed: 3,
+    ready: 5,
+    completed: 5,
+    failed: 4,
   };
   const mappedStep = stageSteps[status.stage];
   if (mappedStep !== undefined) return mappedStep;
@@ -1111,6 +1113,15 @@ function processingStepIndex(status: StatusResponse) {
   if (status.progress >= 35) return 2;
   if (status.progress >= 10) return 1;
   return 0;
+}
+
+function processingFailureMessage(code?: string, fallback?: string): string {
+  const messages: Record<string, string> = {
+    GLOBAL_DEADLINE_EXCEEDED: "Tài liệu cần nhiều thời gian hơn ngân sách xử lý tối đa. Hãy thử lại hoặc tải tài liệu ngắn hơn.",
+    ANALYSIS_TEXT_LIMIT_EXCEEDED: "Văn bản trích xuất vượt giới hạn 600.000 ký tự cho một lần phân tích. Hãy chia tài liệu thành các phần nhỏ hơn.",
+    MODEL_TIMEOUT: "Dịch vụ AI không phản hồi kịp thời. Bạn có thể tải lại tài liệu để thử lại.",
+  };
+  return (code && messages[code]) || fallback || "Quá trình xử lý đã thất bại.";
 }
 
 function OverviewTab({

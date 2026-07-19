@@ -87,8 +87,10 @@ không thể mở lại report cũ, dù item lịch sử vẫn còn.
 |---|---|
 | `LLM_API_KEY` | Bắt buộc để tạo report; vắng key làm task thất bại với `LLM_NOT_CONFIGURED`. |
 | `LLM_BASE_URL`, `LLM_API_URL`, `LLM_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS` | Endpoint/model/timeout/ngân sách output OpenAI-compatible. |
-| `LLM_MAP_BATCH_CHARS`, `LLM_MAP_CONCURRENCY` | Giới hạn batch và tối đa ba map request đồng thời. |
-| `PROCESSING_DEADLINE_SECONDS` | Deadline chờ worker khi đọc kết quả; mặc định 48 giây. |
+| `LLM_MAP_BATCH_CHARS`, `LLM_MAP_MAX_BATCH_CHARS`, `LLM_MAP_TARGET_BATCHES`, `LLM_MAP_CONCURRENCY` | Batch thích ứng theo toàn bộ text, tối đa ba map request đồng thời cho mỗi tài liệu. |
+| `MAX_LLM_CONCURRENCY` | Giới hạn request LLM đang hoạt động trên toàn tiến trình, tránh ba worker tạo burst không kiểm soát. |
+| `MAX_ANALYZABLE_TEXT_CHARS` | Trần text đã trích xuất cho SLA; vượt trần trả `ANALYSIS_TEXT_LIMIT_EXCEEDED` trước khi gọi LLM. |
+| `PROCESSING_DEADLINE_SECONDS` | Deadline thực của worker, mặc định 110 giây; map/reduce/questions bị hủy theo ngân sách pha. |
 | `HISTORY_DB_PATH` | Đường dẫn SQLite history, mặc định `.runtime/history.sqlite3`. |
 | `TAVILY_API_KEY`, `TAVILY_BASE_URL`, `TAVILY_ALLOWED_DOMAINS`, `TAVILY_TIMEOUT_SECONDS`, `TAVILY_MAX_RESULTS` | Cấu hình enrichment Tavily tùy chọn. |
 | `ANTIPAPER_BACKEND_URL` | Target Vite proxy khi development. |

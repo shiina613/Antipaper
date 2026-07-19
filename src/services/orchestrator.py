@@ -6,13 +6,15 @@ import asyncio
 from dataclasses import dataclass, field
 import logging
 import os
-from typing import Any
+import time
+from typing import Any, Callable
 
 from ..ingestion import DocumentIngestor, IngestionError, StitchedPage
-from ..integrations.llm import LlmClient, LlmClientError, LlmSettings
+from ..integrations.llm import LlmClient, LlmClientError, LlmClientTimeoutError, LlmSettings
 from ..intelligence import (
     LlmIntelligencePipeline,
     NormalizedDocument,
+    ProcessingDeadlineExceeded,
     build_local_intelligence_pack,
     build_terminology_result,
 )
@@ -25,6 +27,7 @@ from ..schemas import (
     QuestionResponse,
     ReportQuality,
     SuggestedQuestion,
+    StageTiming,
     SummaryItem,
     TermItem,
     TerminologyQuality,
@@ -32,6 +35,17 @@ from ..schemas import (
 
 
 logger = logging.getLogger(__name__)
+MAX_ANALYZABLE_TEXT_CHARS = int(os.getenv("MAX_ANALYZABLE_TEXT_CHARS", "600000"))
+DEFAULT_PROCESSING_DEADLINE_SECONDS = float(os.getenv("PROCESSING_DEADLINE_SECONDS", "110"))
+# Native PDF/DOCX extraction is CPU-bound and scales with page count, scanned images, and
+# concurrent load, so a large-but-healthy document can parse in ~5s alone yet 11-14s while
+# several workers share the GIL. Guard against ingestion eating the whole budget, but do it
+# with a configurable ceiling (bounded by the total deadline) instead of a flat magic number.
+INGESTION_DEADLINE_SECONDS = float(os.getenv("INGESTION_DEADLINE_SECONDS", "45"))
+
+
+class AnalysisTextLimitExceeded(IngestionError):
+    """Raised before LLM work when extracted content exceeds the supported SLA envelope."""
 
 
 @dataclass
@@ -76,8 +90,29 @@ class DocumentOrchestrator:
     def llm_enabled(self) -> bool:
         return self._llm is not None
 
-    def process(self, *, document_id: str, file_name: str, file_bytes: bytes) -> OrchestrationResult:
+    def process(
+        self,
+        *,
+        document_id: str,
+        file_name: str,
+        file_bytes: bytes,
+        deadline_seconds: float = DEFAULT_PROCESSING_DEADLINE_SECONDS,
+        stage_callback: Callable[[str], None] | None = None,
+    ) -> OrchestrationResult:
+        started = time.perf_counter()
         normalized, pages = self.ingest(document_id=document_id, file_name=file_name, file_bytes=file_bytes)
+        input_characters = sum(len(chunk.text) for chunk in normalized.chunks)
+        if input_characters > MAX_ANALYZABLE_TEXT_CHARS:
+            raise AnalysisTextLimitExceeded(
+                f"Extracted text has {input_characters:,} characters; the analysis limit is "
+                f"{MAX_ANALYZABLE_TEXT_CHARS:,} characters."
+            )
+        elapsed = time.perf_counter() - started
+        ingestion_budget = min(INGESTION_DEADLINE_SECONDS, deadline_seconds)
+        if ingestion_budget > 0 and elapsed > ingestion_budget:
+            raise ProcessingDeadlineExceeded(
+                f"Processing deadline exceeded during ingestion (took {elapsed:.1f}s, budget {ingestion_budget:.0f}s)."
+            )
         processed = ProcessedDocument(
             source_name=file_name,
             page_count=normalized.page_count,
@@ -85,7 +120,26 @@ class DocumentOrchestrator:
             normalized_document=normalized,
             chunks=list(normalized.chunks),
         )
-        report = asyncio.run(self._report(normalized))
+        report = asyncio.run(
+            self._report(
+                normalized,
+                deadline_seconds=max(0.0, deadline_seconds - elapsed),
+                stage_callback=stage_callback,
+            )
+        )
+        report = report.model_copy(
+            update={
+                "quality": report.quality.model_copy(
+                    update={
+                        "input_characters": input_characters,
+                        "stage_timings": [
+                            StageTiming(stage="ingestion", duration_ms=round(elapsed * 1000, 3)),
+                            *report.quality.stage_timings,
+                        ],
+                    }
+                )
+            }
+        )
         return OrchestrationResult(processed, normalized, report)
 
     def ingest(
@@ -133,22 +187,46 @@ class DocumentOrchestrator:
     def to_page_blocks(self, processed_document: ProcessedDocument) -> list[PageBlock]:
         return [PageBlock(kind="text", text=page.content, page_number=page.page_number) for page in processed_document.stitched_pages]
 
-    async def _report(self, document: NormalizedDocument) -> DocumentReport:
+    async def _report(
+        self,
+        document: NormalizedDocument,
+        *,
+        deadline_seconds: float,
+        stage_callback: Callable[[str], None] | None,
+    ) -> DocumentReport:
         """Generate with the model when possible, while preserving a grounded partial report on failure."""
 
         if self._llm is None:
             return self._partial_report(document, warning="LLM_NOT_CONFIGURED")
         try:
-            return await self._llm_report(document)
+            return await self._llm_report(
+                document,
+                deadline_seconds=deadline_seconds,
+                stage_callback=stage_callback,
+            )
+        except ProcessingDeadlineExceeded:
+            raise
+        except LlmClientTimeoutError:
+            raise
         except LlmClientError as exc:
             # No model text is logged or returned to the browser: source content can be sensitive.
             logger.warning("llm_report_fallback document_id=%s error=%s", document.document_id, type(exc).__name__)
             return self._partial_report(document, warning="LLM_GENERATION_FAILED")
 
-    async def _llm_report(self, document: NormalizedDocument) -> DocumentReport:
+    async def _llm_report(
+        self,
+        document: NormalizedDocument,
+        *,
+        deadline_seconds: float,
+        stage_callback: Callable[[str], None] | None,
+    ) -> DocumentReport:
         if self._llm is None:
             raise RuntimeError("_llm_report requires an LLM client")
-        generated = await LlmIntelligencePipeline(self._llm).generate(document)
+        generated = await LlmIntelligencePipeline(self._llm).generate(
+            document,
+            deadline_seconds=deadline_seconds,
+            stage_callback=stage_callback,
+        )
         terminology = build_terminology_result(
             document,
             generated.term_candidates,
@@ -193,6 +271,11 @@ class DocumentOrchestrator:
                 report_status=report_status,
                 passed=report_status == "complete",
                 terminology=terminology_quality,
+                map_wave_count=generated.map_wave_count,
+                llm_call_count=generated.llm_call_count,
+                retry_count=generated.retry_count,
+                queue_ms=generated.queue_ms,
+                stage_timings=[StageTiming(stage=stage, duration_ms=duration_ms) for stage, duration_ms in generated.stage_timings],
             ),
         )
 
